@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import * as cheerio from 'cheerio';
+import Parser from 'rss-parser';
 
 interface Cartoon {
   title: string;
@@ -9,197 +9,137 @@ interface Cartoon {
   date?: string;
 }
 
-// 경향신문 만평 크롤링
+const parser = new Parser({
+  customFields: {
+    item: [
+      ['media:content', 'media'],
+      ['enclosure', 'enclosure'],
+      ['description', 'description']
+    ]
+  }
+});
+
+// 이미지 URL 추출 함수
+function extractImageUrl(item: any): string | null {
+  // 1. media:content
+  if (item.media?.$ && item.media.$.url) {
+    return item.media.$.url;
+  }
+  
+  // 2. enclosure
+  if (item.enclosure?.url) {
+    return item.enclosure.url;
+  }
+  
+  // 3. description에서 img 태그 추출
+  if (item.description || item.content) {
+    const content = item.description || item.content;
+    const imgMatch = content.match(/<img[^>]+src="([^">]+)"/);
+    if (imgMatch && imgMatch[1]) {
+      return imgMatch[1];
+    }
+  }
+  
+  return null;
+}
+
+// 경향신문 RSS
 async function fetchKyunghyangCartoons(): Promise<Cartoon[]> {
   try {
-    const response = await fetch('https://www.khan.co.kr/opinion/cartoon', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-      }
-    });
+    const feed = await parser.parseURL('https://www.khan.co.kr/rss/rssPrintOpinion.xml');
     
-    if (!response.ok) {
-      console.error(`경향신문 응답 실패: ${response.status}`);
-      return [];
-    }
+    const cartoons = feed.items
+      .filter(item => item.title?.includes('만평') || item.categories?.some(cat => cat.includes('만평')))
+      .slice(0, 5)
+      .map(item => {
+        const imageUrl = extractImageUrl(item);
+        return imageUrl ? {
+          title: item.title || '경향신문 만평',
+          imageUrl,
+          link: item.link || '',
+          source: '경향신문',
+          date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
+        } : null;
+      })
+      .filter((item): item is Cartoon => item !== null);
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const cartoons: Cartoon[] = [];
-
-    // 경향신문의 실제 구조에 맞춘 선택자
-    $('article.art_list_item, .cartoon_list li, .list_article').each((index, element) => {
-      const $element = $(element);
-      
-      // 이미지 찾기 (여러 속성 시도)
-      const $img = $element.find('img');
-      const imageUrl = $img.attr('src') || 
-                      $img.attr('data-src') || 
-                      $img.attr('data-lazy-src') || '';
-      
-      if (!imageUrl) return;
-
-      // 제목 찾기
-      const title = $element.find('.art_tit, .tit, h3, h4').text().trim() || 
-                   $img.attr('alt')?.trim() || 
-                   '경향신문 만평';
-      
-      // 링크 찾기
-      const $link = $element.find('a').first();
-      const link = $link.attr('href') || '';
-      
-      // 날짜 찾기
-      const date = $element.find('.date, .art_date, time').text().trim();
-
-      cartoons.push({
-        title,
-        imageUrl: imageUrl.startsWith('http') ? imageUrl : `https://www.khan.co.kr${imageUrl}`,
-        link: link.startsWith('http') ? link : `https://www.khan.co.kr${link}`,
-        source: '경향신문',
-        date: date || undefined
-      });
-    });
-
-    console.log(`경향신문 만평 ${cartoons.length}개 수집`);
+    console.log(`경향신문 RSS: ${cartoons.length}개 수집`);
     return cartoons;
   } catch (error) {
-    console.error('경향신문 크롤링 실패:', error);
+    console.error('경향신문 RSS 실패:', error);
     return [];
   }
 }
 
-// 한겨레 만평 크롤링
+// 한겨레 RSS
 async function fetchHankyorehCartoons(): Promise<Cartoon[]> {
   try {
-    const response = await fetch('https://www.hani.co.kr/arti/cartoon', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-      }
-    });
+    const feed = await parser.parseURL('https://www.hani.co.kr/rss/cartoon/');
     
-    if (!response.ok) {
-      console.error(`한겨레 응답 실패: ${response.status}`);
-      return [];
-    }
+    const cartoons = feed.items
+      .slice(0, 5)
+      .map(item => {
+        const imageUrl = extractImageUrl(item);
+        return imageUrl ? {
+          title: item.title || '한겨레 만평',
+          imageUrl,
+          link: item.link || '',
+          source: '한겨레',
+          date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
+        } : null;
+      })
+      .filter((item): item is Cartoon => item !== null);
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const cartoons: Cartoon[] = [];
-
-    // 한겨레의 실제 구조에 맞춘 선택자
-    $('.article-list .article-item, .cartoon-list li, .section-list-item').each((index, element) => {
-      const $element = $(element);
-      
-      const $img = $element.find('img');
-      const imageUrl = $img.attr('src') || 
-                      $img.attr('data-src') || 
-                      $img.attr('data-original') || '';
-      
-      if (!imageUrl) return;
-
-      const title = $element.find('.article-title, .tit, h4').text().trim() || 
-                   $img.attr('alt')?.trim() || 
-                   '한겨레 만평';
-      
-      const $link = $element.find('a').first();
-      const link = $link.attr('href') || '';
-      
-      const date = $element.find('.date, .article-date, time').text().trim();
-
-      cartoons.push({
-        title,
-        imageUrl: imageUrl.startsWith('http') ? imageUrl : `https://www.hani.co.kr${imageUrl}`,
-        link: link.startsWith('http') ? link : `https://www.hani.co.kr${link}`,
-        source: '한겨레',
-        date: date || undefined
-      });
-    });
-
-    console.log(`한겨레 만평 ${cartoons.length}개 수집`);
+    console.log(`한겨레 RSS: ${cartoons.length}개 수집`);
     return cartoons;
   } catch (error) {
-    console.error('한겨레 크롤링 실패:', error);
+    console.error('한겨레 RSS 실패:', error);
     return [];
   }
 }
 
-// 조선일보 만평 크롤링
+// 조선일보 RSS
 async function fetchChosunCartoons(): Promise<Cartoon[]> {
   try {
-    const response = await fetch('https://www.chosun.com/cartoon/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-      }
-    });
+    const feed = await parser.parseURL('https://www.chosun.com/arc/outboundfeeds/rss/category/opinion/?outputType=xml');
     
-    if (!response.ok) {
-      console.error(`조선일보 응답 실패: ${response.status}`);
-      return [];
-    }
+    const cartoons = feed.items
+      .filter(item => item.title?.includes('만평') || item.categories?.some(cat => cat.includes('만평')))
+      .slice(0, 5)
+      .map(item => {
+        const imageUrl = extractImageUrl(item);
+        return imageUrl ? {
+          title: item.title || '조선일보 만평',
+          imageUrl,
+          link: item.link || '',
+          source: '조선일보',
+          date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
+        } : null;
+      })
+      .filter((item): item is Cartoon => item !== null);
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const cartoons: Cartoon[] = [];
-
-    $('.story-card, .art_list li, article').each((index, element) => {
-      const $element = $(element);
-      
-      const $img = $element.find('img');
-      const imageUrl = $img.attr('src') || 
-                      $img.attr('data-src') || 
-                      $img.attr('data-lazy-src') || '';
-      
-      if (!imageUrl) return;
-
-      const title = $element.find('.story-card__headline, .tit, strong').text().trim() || 
-                   $img.attr('alt')?.trim() || 
-                   '조선일보 만평';
-      
-      const $link = $element.find('a').first();
-      const link = $link.attr('href') || '';
-      
-      const date = $element.find('.story-card__date, .date, time').text().trim();
-
-      cartoons.push({
-        title,
-        imageUrl: imageUrl.startsWith('http') ? imageUrl : `https://www.chosun.com${imageUrl}`,
-        link: link.startsWith('http') ? link : `https://www.chosun.com${link}`,
-        source: '조선일보',
-        date: date || undefined
-      });
-    });
-
-    console.log(`조선일보 만평 ${cartoons.length}개 수집`);
+    console.log(`조선일보 RSS: ${cartoons.length}개 수집`);
     return cartoons;
   } catch (error) {
-    console.error('조선일보 크롤링 실패:', error);
+    console.error('조선일보 RSS 실패:', error);
     return [];
   }
 }
 
 export async function GET() {
   try {
-    console.log('만평 크롤링 시작...');
+    console.log('만평 RSS 수집 시작...');
     
-    // 모든 신문사의 만평을 병렬로 가져오기
     const [kyunghyang, hankyoreh, chosun] = await Promise.all([
       fetchKyunghyangCartoons(),
       fetchHankyorehCartoons(),
       fetchChosunCartoons()
     ]);
 
-    // 모든 만평 합치기
     const allCartoons = [...kyunghyang, ...hankyoreh, ...chosun];
 
     console.log(`총 ${allCartoons.length}개 만평 수집 완료`);
 
-    // 만평이 하나도 없으면 샘플 데이터 반환
     if (allCartoons.length === 0) {
       console.warn('실제 만평을 가져올 수 없어 샘플 데이터 반환');
       return NextResponse.json({
