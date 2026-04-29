@@ -48,20 +48,23 @@ async function fetchKyunghyangCartoons(): Promise<Cartoon[]> {
   try {
     const feed = await parser.parseURL('https://www.khan.co.kr/rss/rssPrintOpinion.xml');
     
-    const cartoons = feed.items
-      .filter(item => item.title?.includes('만평') || item.categories?.some(cat => cat.includes('만평')))
-      .slice(0, 5)
-      .map(item => {
+    const cartoons: Cartoon[] = [];
+    
+    for (const item of feed.items) {
+      if (item.title?.includes('만평') || item.categories?.some(cat => cat.includes('만평'))) {
         const imageUrl = extractImageUrl(item);
-        return imageUrl ? {
-          title: item.title || '경향신문 만평',
-          imageUrl,
-          link: item.link || '',
-          source: '경향신문',
-          date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
-        } : null;
-      })
-      .filter((item): item is Cartoon => item !== null);
+        if (imageUrl) {
+          cartoons.push({
+            title: item.title || '경향신문 만평',
+            imageUrl,
+            link: item.link || '',
+            source: '경향신문',
+            date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
+          });
+        }
+      }
+      if (cartoons.length >= 5) break;
+    }
 
     console.log(`경향신문 RSS: ${cartoons.length}개 수집`);
     return cartoons;
@@ -76,19 +79,20 @@ async function fetchHankyorehCartoons(): Promise<Cartoon[]> {
   try {
     const feed = await parser.parseURL('https://www.hani.co.kr/rss/cartoon/');
     
-    const cartoons = feed.items
-      .slice(0, 5)
-      .map(item => {
-        const imageUrl = extractImageUrl(item);
-        return imageUrl ? {
+    const cartoons: Cartoon[] = [];
+    
+    for (const item of feed.items.slice(0, 5)) {
+      const imageUrl = extractImageUrl(item);
+      if (imageUrl) {
+        cartoons.push({
           title: item.title || '한겨레 만평',
           imageUrl,
           link: item.link || '',
           source: '한겨레',
           date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
-        } : null;
-      })
-      .filter((item): item is Cartoon => item !== null);
+        });
+      }
+    }
 
     console.log(`한겨레 RSS: ${cartoons.length}개 수집`);
     return cartoons;
@@ -103,20 +107,23 @@ async function fetchChosunCartoons(): Promise<Cartoon[]> {
   try {
     const feed = await parser.parseURL('https://www.chosun.com/arc/outboundfeeds/rss/category/opinion/?outputType=xml');
     
-    const cartoons = feed.items
-      .filter(item => item.title?.includes('만평') || item.categories?.some(cat => cat.includes('만평')))
-      .slice(0, 5)
-      .map(item => {
+    const cartoons: Cartoon[] = [];
+    
+    for (const item of feed.items) {
+      if (item.title?.includes('만평') || item.categories?.some(cat => cat.includes('만평'))) {
         const imageUrl = extractImageUrl(item);
-        return imageUrl ? {
-          title: item.title || '조선일보 만평',
-          imageUrl,
-          link: item.link || '',
-          source: '조선일보',
-          date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
-        } : null;
-      })
-      .filter((item): item is Cartoon => item !== null);
+        if (imageUrl) {
+          cartoons.push({
+            title: item.title || '조선일보 만평',
+            imageUrl,
+            link: item.link || '',
+            source: '조선일보',
+            date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
+          });
+        }
+      }
+      if (cartoons.length >= 5) break;
+    }
 
     console.log(`조선일보 RSS: ${cartoons.length}개 수집`);
     return cartoons;
