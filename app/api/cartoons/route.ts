@@ -1,4 +1,3 @@
-
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 
@@ -19,7 +18,8 @@ const parser = new Parser({
       ['description', 'description'],
       ['content:encoded', 'contentEncoded']
     ]
-  }
+  },
+  timeout: 10000
 });
 
 function extractImageUrl(item: any): string | null {
@@ -64,71 +64,7 @@ function extractImageUrl(item: any): string | null {
   return null;
 }
 
-async function fetchYonhapCartoons(): Promise<Cartoon[]> {
-  try {
-    console.log('연합뉴스 RSS 요청 시작...');
-    const feed = await parser.parseURL('https://www.yna.co.kr/rss/cartoon.xml');
-    console.log(`연합뉴스 RSS: ${feed.items.length}개 항목 수신`);
-    
-    const cartoons: Cartoon[] = [];
-    
-    for (const item of feed.items.slice(0, 5)) {
-      const imageUrl = extractImageUrl(item);
-      console.log(`연합뉴스 항목: ${item.title}, 이미지: ${imageUrl}`);
-      
-      if (imageUrl) {
-        cartoons.push({
-          title: item.title || '연합뉴스 만평',
-          imageUrl,
-          link: item.link || '',
-          source: '연합뉴스',
-          date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
-        });
-      }
-    }
-
-    console.log(`연합뉴스 RSS: ${cartoons.length}개 수집 완료`);
-    return cartoons;
-  } catch (error) {
-    console.error('연합뉴스 RSS 실패:', error);
-    return [];
-  }
-}
-
-async function fetchMBCCartoons(): Promise<Cartoon[]> {
-  try {
-    console.log('MBC RSS 요청 시작...');
-    const feed = await parser.parseURL('https://imnews.imbc.com/rss/news/news_00.xml');
-    console.log(`MBC RSS: ${feed.items.length}개 항목 수신`);
-    
-    const cartoons: Cartoon[] = [];
-    
-    for (const item of feed.items) {
-      if (item.title?.includes('만평') || item.title?.includes('그림')) {
-        const imageUrl = extractImageUrl(item);
-        console.log(`MBC 항목: ${item.title}, 이미지: ${imageUrl}`);
-        
-        if (imageUrl) {
-          cartoons.push({
-            title: item.title || 'MBC 만평',
-            imageUrl,
-            link: item.link || '',
-            source: 'MBC',
-            date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
-          });
-        }
-      }
-      if (cartoons.length >= 5) break;
-    }
-
-    console.log(`MBC RSS: ${cartoons.length}개 수집 완료`);
-    return cartoons;
-  } catch (error) {
-    console.error('MBC RSS 실패:', error);
-    return [];
-  }
-}
-
+// 한겨레 만평
 async function fetchHankyorehCartoons(): Promise<Cartoon[]> {
   try {
     console.log('한겨레 RSS 요청 시작...');
@@ -152,7 +88,7 @@ async function fetchHankyorehCartoons(): Promise<Cartoon[]> {
           });
         }
       }
-      if (cartoons.length >= 5) break;
+      if (cartoons.length >= 10) break;
     }
 
     console.log(`한겨레 RSS: ${cartoons.length}개 수집 완료`);
@@ -163,70 +99,34 @@ async function fetchHankyorehCartoons(): Promise<Cartoon[]> {
   }
 }
 
-async function fetchSBSCartoons(): Promise<Cartoon[]> {
+// 경향신문 만평
+async function fetchKyunghyangCartoons(): Promise<Cartoon[]> {
   try {
-    console.log('SBS RSS 요청 시작...');
-    const feed = await parser.parseURL('https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01');
-    console.log(`SBS RSS: ${feed.items.length}개 항목 수신`);
+    console.log('경향신문 RSS 요청 시작...');
+    const feed = await parser.parseURL('https://www.khan.co.kr/rss/rssdata/kh_cartoon.xml');
+    console.log(`경향신문 RSS: ${feed.items.length}개 항목 수신`);
     
     const cartoons: Cartoon[] = [];
     
-    for (const item of feed.items) {
-      if (item.title?.includes('만평') || item.title?.includes('그림')) {
-        const imageUrl = extractImageUrl(item);
-        console.log(`SBS 항목: ${item.title}, 이미지: ${imageUrl}`);
-        
-        if (imageUrl) {
-          cartoons.push({
-            title: item.title || 'SBS 만평',
-            imageUrl,
-            link: item.link || '',
-            source: 'SBS',
-            date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
-          });
-        }
+    for (const item of feed.items.slice(0, 10)) {
+      const imageUrl = extractImageUrl(item);
+      console.log(`경향신문 항목: ${item.title}, 이미지: ${imageUrl}`);
+      
+      if (imageUrl) {
+        cartoons.push({
+          title: item.title || '경향신문 만평',
+          imageUrl,
+          link: item.link || '',
+          source: '경향신문',
+          date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
+        });
       }
-      if (cartoons.length >= 5) break;
     }
 
-    console.log(`SBS RSS: ${cartoons.length}개 수집 완료`);
+    console.log(`경향신문 RSS: ${cartoons.length}개 수집 완료`);
     return cartoons;
   } catch (error) {
-    console.error('SBS RSS 실패:', error);
-    return [];
-  }
-}
-
-async function fetchKBSCartoons(): Promise<Cartoon[]> {
-  try {
-    console.log('KBS RSS 요청 시작...');
-    const feed = await parser.parseURL('https://news.kbs.co.kr/rss/news.do?id=R01');
-    console.log(`KBS RSS: ${feed.items.length}개 항목 수신`);
-    
-    const cartoons: Cartoon[] = [];
-    
-    for (const item of feed.items) {
-      if (item.title?.includes('만평') || item.title?.includes('그림')) {
-        const imageUrl = extractImageUrl(item);
-        console.log(`KBS 항목: ${item.title}, 이미지: ${imageUrl}`);
-        
-        if (imageUrl) {
-          cartoons.push({
-            title: item.title || 'KBS 만평',
-            imageUrl,
-            link: item.link || '',
-            source: 'KBS',
-            date: item.pubDate ? new Date(item.pubDate).toISOString().split('T')[0] : undefined
-          });
-        }
-      }
-      if (cartoons.length >= 5) break;
-    }
-
-    console.log(`KBS RSS: ${cartoons.length}개 수집 완료`);
-    return cartoons;
-  } catch (error) {
-    console.error('KBS RSS 실패:', error);
+    console.error('경향신문 RSS 실패:', error);
     return [];
   }
 }
@@ -235,15 +135,12 @@ export async function GET() {
   try {
     console.log('=== 만평 RSS 수집 시작 ===');
     
-    const [yonhap, mbc, hani, sbs, kbs] = await Promise.all([
-      fetchYonhapCartoons(),
-      fetchMBCCartoons(),
+    const [hani, kyunghyang] = await Promise.all([
       fetchHankyorehCartoons(),
-      fetchSBSCartoons(),
-      fetchKBSCartoons()
+      fetchKyunghyangCartoons()
     ]);
 
-    const allCartoons = [...yonhap, ...mbc, ...hani, ...sbs, ...kbs];
+    const allCartoons = [...hani, ...kyunghyang];
 
     console.log(`=== 총 ${allCartoons.length}개 만평 수집 완료 ===`);
 
@@ -275,11 +172,8 @@ export async function GET() {
         ],
         count: 3,
         sources: {
-          yonhap: 0,
-          mbc: 0,
           hani: 0,
-          sbs: 0,
-          kbs: 0
+          kyunghyang: 0
         },
         message: '실제 만평 데이터를 가져올 수 없어 샘플 데이터를 표시합니다.'
       });
@@ -289,11 +183,8 @@ export async function GET() {
       cartoons: allCartoons,
       count: allCartoons.length,
       sources: {
-        yonhap: yonhap.length,
-        mbc: mbc.length,
         hani: hani.length,
-        sbs: sbs.length,
-        kbs: kbs.length
+        kyunghyang: kyunghyang.length
       }
     });
 
@@ -305,11 +196,8 @@ export async function GET() {
         cartoons: [],
         count: 0,
         sources: {
-          yonhap: 0,
-          mbc: 0,
           hani: 0,
-          sbs: 0,
-          kbs: 0
+          kyunghyang: 0
         }
       },
       { status: 500 }
