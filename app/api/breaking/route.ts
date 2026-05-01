@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 
+type NewsCategory = '국내' | '국제';
+
 type RSSMediaObject = {
   $?: {
     url?: string;
@@ -33,14 +35,20 @@ interface Article {
   pubDate: string;
   description: string;
   source: string;
+  category: NewsCategory;
   imageUrl?: string;
 }
 
 interface RSSFeedConfig {
   url: string;
   source: string;
+  category: NewsCategory;
   limit: number;
 }
+
+const BREAKING_MAX_AGE_HOURS = 12;
+const YTN_RECENT_LIMIT = 8;
+const YTN_MAX_AGE_HOURS = 12;
 
 const parser: Parser<object, RSSItem> = new Parser<object, RSSItem>({
   customFields: {
@@ -55,43 +63,66 @@ const parser: Parser<object, RSSItem> = new Parser<object, RSSItem>({
 });
 
 const RSS_FEEDS: RSSFeedConfig[] = [
+  // 국내 속보/최신뉴스
   {
     url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER',
     source: 'SBS',
+    category: '국내',
     limit: 12
   },
   {
     url: 'https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER',
     source: 'SBS 주요뉴스',
+    category: '국내',
     limit: 12
   },
   {
     url: 'https://imnews.imbc.com/rss/google_news/narrativeNews.rss',
     source: 'MBC',
+    category: '국내',
     limit: 15
   },
   {
     url: 'https://imnews.imbc.com/rss/news/news_00.xml',
-    source: 'MBC 전체뉴스',
+    source: 'MBC',
+    category: '국내',
     limit: 15
   },
   {
     url: 'https://www.yonhapnewstv.co.kr/category/news/headline/feed/',
     source: '연합뉴스TV',
+    category: '국내',
     limit: 12
   },
+
+  // 국제 속보/최신뉴스
   {
-    url: 'http://fs.jtbc.co.kr//RSS/newsflash.xml',
-    source: 'JTBC',
-    limit: 12
+    url: 'https://feeds.bbci.co.uk/news/world/rss.xml',
+    source: 'BBC News',
+    category: '국제',
+    limit: 10
+  },
+  {
+    url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
+    source: 'New York Times',
+    category: '국제',
+    limit: 10
+  },
+  {
+    url: 'https://www.aljazeera.com/xml/rss/all.xml',
+    source: 'Al Jazeera',
+    category: '국제',
+    limit: 10
+  },
+  {
+    url: 'https://www.theguardian.com/world/rss',
+    source: 'The Guardian',
+    category: '국제',
+    limit: 10
   }
 ];
 
-const YTN_BREAKING_URL = 'https://www.ytn.co.kr/news/list.php?mcd=0133';
 const YTN_RECENT_URL = 'https://www.ytn.co.kr/news/list.php?mcd=recentnews';
-
-const YTN_BREAKING_LIMIT = 8;
-const YTN_RECENT_LIMIT = 8;
 
 const FETCH_HEADERS = {
   'User-Agent':
@@ -270,8 +301,8 @@ function getItemDescription(item: RSSItem): string {
   return item.contentSnippet || item.description || item.content || item.contentEncoded || '';
 }
 
-function getItemPubDate(item: RSSItem): string {
-  return item.pubDate || item.isoDate || new Date().toISOString();
+function getItemPubDate(item: RSSItem): string | undefined {
+  return item.pubDate || item.isoDate;
 }
 
 function normalizeTitle(title: string): string {
@@ -313,36 +344,73 @@ function removeDuplicateArticles(articles: Article[]): Article[] {
   });
 }
 
-function normalizeDateValue(value: string | undefined): string {
+function normalizeDateValue(value: string | undefined): string | undefined {
   if (!value) {
-    return new Date().toISOString();
+    return undefined;
   }
 
   const parsed = new Date(value);
 
   if (Number.isNaN(parsed.getTime())) {
-    return new Date().toISOString();
+    return undefined;
   }
 
   return parsed.toISOString();
 }
 
-async function fetchRSSFeed({ url, source, limit }: RSSFeedConfig): Promise<Article[]> {
+function isRecentEnough(pubDate: string, maxAgeHours: number): boolean {
+  const articleTime = new Date(pubDate).getTime();
+
+  if (Number.isNaN(articleTime)) {
+    return false;
+  }
+
+  const now = Date.now();
+  const diffMs = now - articleTime;
+  const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+
+  if (diffMs < -60 * 60 * 1000) {
+    return false;
+  }
+
+  return diffMs <= maxAgeMs;
+}
+
+async function fetchRSSFeed({
+  url,
+  source,
+  category,
+  limit
+}: RSSFeedConfig): Promise<Article[]> {
   try {
     const feed = await parser.parseURL(url);
 
-    return feed.items.slice(0, limit).map((item) => {
-      const imageUrl = extractImageUrl(item);
+    return feed.items
+      .slice(0, limit)
+      .map((item) => {
+        const pubDate = normalizeDateValue(getItemPubDate(item));
 
-      return {
-        title: cleanTitle(item.title || '제목 없음'),
-        link: item.link || '#',
-        pubDate: normalizeDateValue(getItemPubDate(item)),
-        description: cleanDescription(getItemDescription(item)),
-        source,
-        imageUrl
-      };
-    });
+        if (!pubDate) {
+          return null;
+        }
+
+        if (!isRecentEnough(pubDate, BREAKING_MAX_AGE_HOURS)) {
+          return null;
+        }
+
+        const imageUrl = extractImageUrl(item);
+
+        return {
+          title: cleanTitle(item.title || '제목 없음'),
+          link: item.link || '#',
+          pubDate,
+          description: cleanDescription(getItemDescription(item)),
+          source,
+          category,
+          imageUrl
+        };
+      })
+      .filter((article): article is Article => article !== null);
   } catch (error) {
     console.error(`RSS 피드 가져오기 실패 (${source}):`, error);
     return [];
@@ -378,22 +446,44 @@ function makeAbsoluteUrl(baseUrl: string, href: string): string {
   return new URL(href, baseUrl).toString();
 }
 
-function extractYtnDateFromHtml(fragment: string): string {
-  const now = new Date();
+function parseYtnDateFromLink(link: string): string | undefined {
+  const match = link.match(/_(\d{14})/);
 
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const rawDate = match[1];
+
+  const year = rawDate.slice(0, 4);
+  const month = rawDate.slice(4, 6);
+  const day = rawDate.slice(6, 8);
+  const hour = rawDate.slice(8, 10);
+  const minute = rawDate.slice(10, 12);
+  const second = rawDate.slice(12, 14);
+
+  const isoWithKoreanTimezone = `${year}-${month}-${day}T${hour}:${minute}:${second}+09:00`;
+  const parsed = new Date(isoWithKoreanTimezone);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed.toISOString();
+}
+
+function extractYtnDateFromHtml(fragment: string): string | undefined {
   const dateTimeMatch = fragment.match(
     /(\d{4})[-.](\d{1,2})[-.](\d{1,2})\s+(\d{1,2}):(\d{2})/
   );
 
   if (dateTimeMatch) {
     const [, year, month, day, hour, minute] = dateTimeMatch;
-    const parsed = new Date(
-      Number(year),
-      Number(month) - 1,
-      Number(day),
-      Number(hour),
-      Number(minute)
-    );
+    const isoWithKoreanTimezone = `${year}-${month.padStart(2, '0')}-${day.padStart(
+      2,
+      '0'
+    )}T${hour.padStart(2, '0')}:${minute}:00+09:00`;
+    const parsed = new Date(isoWithKoreanTimezone);
 
     if (!Number.isNaN(parsed.getTime())) {
       return parsed.toISOString();
@@ -403,22 +493,23 @@ function extractYtnDateFromHtml(fragment: string): string {
   const timeOnlyMatch = fragment.match(/(\d{1,2}):(\d{2})/);
 
   if (timeOnlyMatch) {
+    const now = new Date();
     const [, hour, minute] = timeOnlyMatch;
-    const parsed = new Date(now);
+    const koreanNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
 
-    parsed.setHours(Number(hour));
-    parsed.setMinutes(Number(minute));
-    parsed.setSeconds(0);
-    parsed.setMilliseconds(0);
+    koreanNow.setHours(Number(hour));
+    koreanNow.setMinutes(Number(minute));
+    koreanNow.setSeconds(0);
+    koreanNow.setMilliseconds(0);
 
-    if (parsed.getTime() - now.getTime() > 60 * 60 * 1000) {
-      parsed.setDate(parsed.getDate() - 1);
-    }
-
-    return parsed.toISOString();
+    return new Date(koreanNow.getTime() - 9 * 60 * 60 * 1000).toISOString();
   }
 
-  return now.toISOString();
+  return undefined;
+}
+
+function extractYtnPubDate(fragment: string, link: string): string {
+  return parseYtnDateFromLink(link) || extractYtnDateFromHtml(fragment) || new Date().toISOString();
 }
 
 function extractYtnImageFromFragment(fragment: string): string | undefined {
@@ -544,32 +635,26 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
       continue;
     }
 
+    const pubDate = extractYtnPubDate(fragment, link);
+
+    if (!isRecentEnough(pubDate, YTN_MAX_AGE_HOURS)) {
+      continue;
+    }
+
     seenLinks.add(link);
 
     articles.push({
       title,
       link,
-      pubDate: extractYtnDateFromHtml(fragment),
-      description:
-        source === 'YTN 속보'
-          ? 'YTN 공식 속보 목록에서 수집한 기사입니다.'
-          : 'YTN 최신뉴스 목록에서 수집한 기사입니다.',
+      pubDate,
+      description: 'YTN 최신뉴스 목록에서 수집한 기사입니다.',
       source,
+      category: '국내',
       imageUrl: extractYtnImageFromFragment(fragment)
     });
   }
 
   return articles;
-}
-
-async function fetchYtnBreakingNews(): Promise<Article[]> {
-  try {
-    const html = await fetchText(YTN_BREAKING_URL);
-    return parseYtnArticles(html, 'YTN 속보', YTN_BREAKING_LIMIT);
-  } catch (error) {
-    console.error('YTN 속보 수집 실패:', error);
-    return [];
-  }
 }
 
 async function fetchYtnRecentNews(): Promise<Article[]> {
@@ -598,11 +683,23 @@ function createSourceStats(articles: Article[]): Record<string, number> {
   }, {});
 }
 
+function createCategoryStats(articles: Article[]): Record<NewsCategory, number> {
+  return articles.reduce<Record<NewsCategory, number>>(
+    (acc, article) => {
+      acc[article.category] += 1;
+      return acc;
+    },
+    {
+      국내: 0,
+      국제: 0
+    }
+  );
+}
+
 export async function GET() {
   try {
     const results = await Promise.allSettled([
       ...RSS_FEEDS.map((feed) => fetchRSSFeed(feed)),
-      fetchYtnBreakingNews(),
       fetchYtnRecentNews()
     ]);
 
@@ -628,12 +725,14 @@ export async function GET() {
     const uniqueArticles = removeDuplicateArticles(allArticles);
     const articles = sortByLatestFirst(uniqueArticles);
     const sourceStats = createSourceStats(articles);
+    const categoryStats = createCategoryStats(articles);
 
     return NextResponse.json({
       articles,
       lastUpdated: new Date().toISOString(),
       totalCount: articles.length,
       sourceStats,
+      categoryStats,
       sources: Object.keys(sourceStats),
       errors: errors.length > 0 ? errors : undefined
     });
