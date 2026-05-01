@@ -94,6 +94,24 @@ const RSS_FEEDS: RSSFeedConfig[] = [
     limit: 12
   },
   {
+    url: 'https://www.newsis.com/RSS/sokbo.xml',
+    source: '뉴시스',
+    category: '국내',
+    limit: 15
+  },
+  {
+    url: 'https://www.mk.co.kr/rss/30000001/',
+    source: '매일경제',
+    category: '국내',
+    limit: 10
+  },
+  {
+    url: 'https://www.khan.co.kr/rss/rssdata/total_news.xml',
+    source: '경향신문',
+    category: '국내',
+    limit: 10
+  },
+  {
     url: 'https://feeds.bbci.co.uk/news/world/rss.xml',
     source: 'BBC News',
     category: '국제',
