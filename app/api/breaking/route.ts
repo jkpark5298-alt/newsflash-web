@@ -63,7 +63,6 @@ const parser: Parser<object, RSSItem> = new Parser<object, RSSItem>({
 });
 
 const RSS_FEEDS: RSSFeedConfig[] = [
-  // 국내 속보/최신뉴스
   {
     url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER',
     source: 'SBS',
@@ -94,8 +93,6 @@ const RSS_FEEDS: RSSFeedConfig[] = [
     category: '국내',
     limit: 12
   },
-
-  // 국제 속보/최신뉴스
   {
     url: 'https://feeds.bbci.co.uk/news/world/rss.xml',
     source: 'BBC News',
@@ -384,33 +381,33 @@ async function fetchRSSFeed({
 }: RSSFeedConfig): Promise<Article[]> {
   try {
     const feed = await parser.parseURL(url);
+    const articles: Article[] = [];
 
-    return feed.items
-      .slice(0, limit)
-      .map((item) => {
-        const pubDate = normalizeDateValue(getItemPubDate(item));
+    for (const item of feed.items.slice(0, limit)) {
+      const pubDate = normalizeDateValue(getItemPubDate(item));
 
-        if (!pubDate) {
-          return null;
-        }
+      if (!pubDate) {
+        continue;
+      }
 
-        if (!isRecentEnough(pubDate, BREAKING_MAX_AGE_HOURS)) {
-          return null;
-        }
+      if (!isRecentEnough(pubDate, BREAKING_MAX_AGE_HOURS)) {
+        continue;
+      }
 
-        const imageUrl = extractImageUrl(item);
+      const article: Article = {
+        title: cleanTitle(item.title || '제목 없음'),
+        link: item.link || '#',
+        pubDate,
+        description: cleanDescription(getItemDescription(item)),
+        source,
+        category,
+        imageUrl: extractImageUrl(item)
+      };
 
-        return {
-          title: cleanTitle(item.title || '제목 없음'),
-          link: item.link || '#',
-          pubDate,
-          description: cleanDescription(getItemDescription(item)),
-          source,
-          category,
-          imageUrl
-        };
-      })
-      .filter((article): article is Article => article !== null);
+      articles.push(article);
+    }
+
+    return articles;
   } catch (error) {
     console.error(`RSS 피드 가져오기 실패 (${source}):`, error);
     return [];
@@ -643,7 +640,7 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
 
     seenLinks.add(link);
 
-    articles.push({
+    const article: Article = {
       title,
       link,
       pubDate,
@@ -651,7 +648,9 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
       source,
       category: '국내',
       imageUrl: extractYtnImageFromFragment(fragment)
-    });
+    };
+
+    articles.push(article);
   }
 
   return articles;
