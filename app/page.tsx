@@ -193,6 +193,38 @@ export default function Home() {
     }
   };
 
+  const getRelativeTime = (dateString: string): string => {
+    const now = new Date();
+    const past = new Date(dateString);
+
+    if (Number.isNaN(past.getTime())) {
+      return '시간 정보 없음';
+    }
+
+    const diffMs = now.getTime() - past.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) {
+      return '방금 전';
+    }
+
+    if (diffMins < 60) {
+      return `${diffMins}분 전`;
+    }
+
+    if (diffHours < 24) {
+      return `${diffHours}시간 전`;
+    }
+
+    if (diffDays < 7) {
+      return `${diffDays}일 전`;
+    }
+
+    return past.toLocaleDateString('ko-KR');
+  };
+
   const getFormattedTime = (dateString: string) => {
     const date = new Date(dateString);
 
@@ -249,12 +281,59 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-4 py-6">
+        {/* 상단 카테고리 메뉴 */}
+        <section className="mb-8">
+          <div className="bg-white rounded-2xl shadow-md p-4">
+            <div className="grid grid-cols-4 gap-3">
+              <Link
+                href="/breaking"
+                className="flex items-center justify-center gap-2 rounded-xl bg-red-50 px-3 py-4 text-center hover:bg-red-100 transition-colors group"
+              >
+                <span className="text-2xl">🚨</span>
+                <span className="font-bold text-gray-800 group-hover:text-red-600">속보</span>
+              </Link>
+
+              <Link
+                href="/international"
+                className="flex items-center justify-center gap-2 rounded-xl bg-blue-50 px-3 py-4 text-center hover:bg-blue-100 transition-colors group"
+              >
+                <span className="text-2xl">🌍</span>
+                <span className="font-bold text-gray-800 group-hover:text-blue-600">국제</span>
+              </Link>
+
+              <Link
+                href="/cartoons"
+                className="flex items-center justify-center gap-2 rounded-xl bg-purple-50 px-3 py-4 text-center hover:bg-purple-100 transition-colors group"
+              >
+                <span className="text-2xl">🎨</span>
+                <span className="font-bold text-gray-800 group-hover:text-purple-600">
+                  시사만평
+                </span>
+              </Link>
+
+              <Link
+                href="/community"
+                className="flex items-center justify-center gap-2 rounded-xl bg-amber-50 px-3 py-4 text-center hover:bg-amber-100 transition-colors group"
+              >
+                <span className="text-2xl">💬</span>
+                <span className="font-bold text-gray-800 group-hover:text-amber-600">
+                  커뮤니티
+                </span>
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        {/* 속보 섹션 */}
         <section className="mb-12">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
               <span className="text-3xl">🚨</span>
-              <h2 className="text-3xl font-bold text-gray-800">속보</h2>
+              <div>
+                <h2 className="text-3xl font-bold text-gray-800">속보</h2>
+                <p className="text-sm text-gray-500 mt-1">5분마다 자동 갱신됩니다.</p>
+              </div>
             </div>
             <Link
               href="/breaking"
@@ -265,40 +344,51 @@ export default function Home() {
           </div>
 
           {breakingNews.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {breakingNews.slice(0, 12).map((article, index) => (
+            <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+              {breakingNews.slice(0, 8).map((article, index) => (
                 <a
-                  key={index}
+                  key={`${article.source}-${article.link}-${index}`}
                   href={article.link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden group"
+                  className="block border-b border-gray-100 hover:bg-gray-50 transition-colors last:border-b-0"
                 >
-                  {article.imageUrl && (
-                    <div className="relative w-full h-48 overflow-hidden bg-gray-100">
-                      <Image
-                        src={article.imageUrl}
-                        alt={article.title}
-                        fill
-                        className="object-cover group-hover:scale-105 transition-transform duration-300"
-                        unoptimized
-                      />
+                  <div className="flex gap-4 p-4">
+                    <div className="flex-shrink-0 w-24 h-24 md:w-28 md:h-28 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center">
+                      {article.imageUrl ? (
+                        <img
+                          src={article.imageUrl}
+                          alt={article.title}
+                          className="w-full h-full object-cover"
+                          onError={(event) => {
+                            event.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="text-3xl md:text-4xl">
+                          {getSourceEmoji(article.source)}
+                        </div>
+                      )}
                     </div>
-                  )}
 
-                  <div className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-xs font-semibold ${getSourceColor(article.source)}`}>
-                        {getSourceEmoji(article.source)} {article.source}
-                      </span>
-                      <span className="text-gray-400 text-xs">
-                        {getFormattedTime(article.pubDate)}
-                      </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`font-bold text-sm ${getSourceColor(article.source)}`}>
+                          {article.source}
+                        </span>
+                        <span className="text-gray-400 text-sm">
+                          {getRelativeTime(article.pubDate)}
+                        </span>
+                      </div>
+
+                      <h3 className="text-base font-bold text-gray-900 mb-2 line-clamp-2 leading-snug">
+                        {article.title}
+                      </h3>
+
+                      <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
+                        {article.description}
+                      </p>
                     </div>
-                    <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 line-clamp-2 mb-2">
-                      {article.title}
-                    </h3>
-                    <p className="text-sm text-gray-600 line-clamp-2">{article.description}</p>
                   </div>
                 </a>
               ))}
@@ -310,6 +400,7 @@ export default function Home() {
           )}
         </section>
 
+        {/* 커뮤니티 이슈 섹션 */}
         <section className="mb-12">
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
@@ -404,11 +495,15 @@ export default function Home() {
           )}
         </section>
 
+        {/* 시사만평 섹션 */}
         <section className="mb-12">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <span className="text-3xl">🎨</span>
-              <h2 className="text-3xl font-bold text-gray-800">시사만평</h2>
+              <div>
+                <h2 className="text-3xl font-bold text-gray-800">시사만평</h2>
+                <p className="text-sm text-gray-500 mt-1">1시간마다 자동 갱신됩니다.</p>
+              </div>
             </div>
             <Link
               href="/cartoons"
@@ -459,43 +554,6 @@ export default function Home() {
               <p className="text-gray-500">시사만평을 불러오는 중...</p>
             </div>
           )}
-        </section>
-
-        <section className="mb-12">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">카테고리별 뉴스</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Link
-              href="/breaking"
-              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
-            >
-              <div className="text-4xl mb-2">🚨</div>
-              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">속보</h3>
-            </Link>
-
-            <Link
-              href="/international"
-              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
-            >
-              <div className="text-4xl mb-2">🌍</div>
-              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">국제</h3>
-            </Link>
-
-            <Link
-              href="/cartoons"
-              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
-            >
-              <div className="text-4xl mb-2">🎨</div>
-              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">시사만평</h3>
-            </Link>
-
-            <Link
-              href="/community"
-              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
-            >
-              <div className="text-4xl mb-2">💬</div>
-              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">커뮤니티</h3>
-            </Link>
-          </div>
         </section>
       </main>
     </div>
