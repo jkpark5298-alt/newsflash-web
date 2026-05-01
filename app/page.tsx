@@ -4,6 +4,10 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 
+const BREAKING_REFRESH_MS = 5 * 60 * 1000;
+const COMMUNITY_REFRESH_MS = 5 * 60 * 1000;
+const CARTOON_REFRESH_MS = 60 * 60 * 1000;
+
 interface Article {
   title: string;
   link: string;
@@ -41,24 +45,58 @@ export default function Home() {
   const [communityLoading, setCommunityLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  async function fetchBreakingNews() {
+    const breakingResponse = await fetch('/api/breaking', {
+      cache: 'no-store'
+    });
+
+    if (!breakingResponse.ok) {
+      throw new Error('속보를 불러오는데 실패했습니다.');
+    }
+
+    const breakingData = await breakingResponse.json();
+    setBreakingNews(breakingData.articles || []);
+  }
+
+  async function fetchCartoons() {
+    const cartoonsResponse = await fetch('/api/cartoons', {
+      cache: 'no-store'
+    });
+
+    if (!cartoonsResponse.ok) {
+      return;
+    }
+
+    const cartoonsData = await cartoonsResponse.json();
+    setCartoons(cartoonsData.cartoons || []);
+  }
+
+  async function fetchCommunityIssues() {
+    try {
+      setCommunityLoading(true);
+
+      const communityResponse = await fetch('/api/community', {
+        cache: 'no-store'
+      });
+
+      if (!communityResponse.ok) {
+        return;
+      }
+
+      const communityData = await communityResponse.json();
+      setCommunityIssues(communityData.issues || []);
+    } catch (err) {
+      console.error('커뮤니티 이슈 로딩 에러:', err);
+      setCommunityIssues([]);
+    } finally {
+      setCommunityLoading(false);
+    }
+  }
+
   useEffect(() => {
-    async function fetchNews() {
+    async function fetchInitialData() {
       try {
-        const breakingResponse = await fetch('/api/breaking');
-
-        if (!breakingResponse.ok) {
-          throw new Error('뉴스를 불러오는데 실패했습니다.');
-        }
-
-        const breakingData = await breakingResponse.json();
-        setBreakingNews(breakingData.articles || []);
-
-        const cartoonsResponse = await fetch('/api/cartoons');
-
-        if (cartoonsResponse.ok) {
-          const cartoonsData = await cartoonsResponse.json();
-          setCartoons(cartoonsData.cartoons || []);
-        }
+        await Promise.all([fetchBreakingNews(), fetchCartoons()]);
       } catch (err) {
         console.error('뉴스 로딩 에러:', err);
         setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.');
@@ -67,34 +105,16 @@ export default function Home() {
       }
     }
 
-    async function fetchCommunityIssues() {
-      try {
-        setCommunityLoading(true);
-
-        const communityResponse = await fetch('/api/community');
-
-        if (!communityResponse.ok) {
-          return;
-        }
-
-        const communityData = await communityResponse.json();
-        setCommunityIssues(communityData.issues || []);
-      } catch (err) {
-        console.error('커뮤니티 이슈 로딩 에러:', err);
-        setCommunityIssues([]);
-      } finally {
-        setCommunityLoading(false);
-      }
-    }
-
-    fetchNews();
+    fetchInitialData();
     fetchCommunityIssues();
 
-    const newsInterval = setInterval(fetchNews, 300000);
-    const communityInterval = setInterval(fetchCommunityIssues, 300000);
+    const breakingInterval = setInterval(fetchBreakingNews, BREAKING_REFRESH_MS);
+    const cartoonInterval = setInterval(fetchCartoons, CARTOON_REFRESH_MS);
+    const communityInterval = setInterval(fetchCommunityIssues, COMMUNITY_REFRESH_MS);
 
     return () => {
-      clearInterval(newsInterval);
+      clearInterval(breakingInterval);
+      clearInterval(cartoonInterval);
       clearInterval(communityInterval);
     };
   }, []);
@@ -219,7 +239,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
-      {/* 헤더 */}
       <header className="bg-white shadow-md sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4">
           <div className="flex items-center gap-3">
@@ -231,7 +250,6 @@ export default function Home() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8">
-        {/* 속보 섹션 */}
         <section className="mb-12">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
@@ -292,7 +310,6 @@ export default function Home() {
           )}
         </section>
 
-        {/* 커뮤니티 이슈 섹션 */}
         <section className="mb-12">
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
@@ -387,7 +404,6 @@ export default function Home() {
           )}
         </section>
 
-        {/* 시사만평 섹션 */}
         <section className="mb-12">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
@@ -445,7 +461,6 @@ export default function Home() {
           )}
         </section>
 
-        {/* 카테고리 링크 */}
         <section className="mb-12">
           <h2 className="text-2xl font-bold text-gray-800 mb-6">카테고리별 뉴스</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

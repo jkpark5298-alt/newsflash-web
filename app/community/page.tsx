@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
+const COMMUNITY_REFRESH_MS = 5 * 60 * 1000;
+
 type CommunitySourceFilter = '전체' | '클리앙' | '뽐뿌';
 
 interface CommunityIssue {
@@ -39,7 +41,7 @@ export default function CommunityPage() {
     try {
       if (isRefresh) {
         setRefreshing(true);
-      } else {
+      } else if (issues.length === 0) {
         setLoading(true);
       }
 
@@ -73,6 +75,12 @@ export default function CommunityPage() {
 
   useEffect(() => {
     fetchCommunityIssues();
+
+    const interval = setInterval(() => {
+      fetchCommunityIssues();
+    }, COMMUNITY_REFRESH_MS);
+
+    return () => clearInterval(interval);
   }, []);
 
   const filteredIssues = useMemo(() => {
@@ -164,7 +172,7 @@ export default function CommunityPage() {
     );
   }
 
-  if (error) {
+  if (error && issues.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center px-4">
         <div className="bg-white rounded-2xl shadow-md p-8 max-w-md w-full text-center">
@@ -174,7 +182,7 @@ export default function CommunityPage() {
             onClick={() => fetchCommunityIssues(true)}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            다시 시도
+            즉시 갱신
           </button>
         </div>
       </div>
@@ -196,9 +204,9 @@ export default function CommunityPage() {
             <button
               onClick={() => fetchCommunityIssues(true)}
               disabled={refreshing}
-              className="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-60 transition-colors text-sm font-medium"
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition-colors text-sm font-semibold"
             >
-              {refreshing ? '새로고침 중...' : '새로고침'}
+              {refreshing ? '갱신 중...' : '즉시 갱신'}
             </button>
           </div>
 
@@ -208,12 +216,18 @@ export default function CommunityPage() {
               <h1 className="text-3xl font-bold text-gray-800">커뮤니티 이슈 전체보기</h1>
             </div>
             <p className="text-sm text-gray-600">
-              클리앙과 뽐뿌의 공개 게시글 기반 이슈입니다.
+              클리앙과 뽐뿌의 공개 게시글 기반 이슈입니다. 5분마다 자동 갱신됩니다.
             </p>
             <p className="text-xs text-amber-700 mt-1">
               커뮤니티 이슈는 검증된 뉴스가 아니므로 원문에서 맥락을 확인하세요.
             </p>
           </div>
+
+          {error && issues.length > 0 && (
+            <div className="mb-3 rounded-lg bg-red-50 border border-red-100 px-4 py-2 text-sm text-red-600">
+              {error}
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-4 mb-3 text-sm text-gray-500">
             <span>
@@ -265,9 +279,7 @@ export default function CommunityPage() {
                     </span>
                     <span className="text-gray-500 text-xs">{issue.category}</span>
                     <span className="text-gray-300 text-xs">·</span>
-                    <span className="text-gray-400 text-xs">
-                      {getFormattedTime(issue.pubDate)}
-                    </span>
+                    <span className="text-gray-400 text-xs">{getFormattedTime(issue.pubDate)}</span>
                   </div>
 
                   <h2 className="text-base md:text-lg font-bold text-gray-900 leading-snug mb-2">
