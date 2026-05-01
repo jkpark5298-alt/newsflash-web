@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Image from 'next/image';
+import Link from 'next/link';
 
 interface Cartoon {
   title: string;
   imageUrl: string;
   link: string;
+  pubDate: string;
   source: string;
 }
 
@@ -14,38 +15,62 @@ export default function CartoonsPage() {
   const [cartoons, setCartoons] = useState<Cartoon[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
-  useEffect(() => {
-    fetchCartoons();
-  }, []);
-
-  const fetchCartoons = async () => {
+  const fetchCartoons = async (silent = false) => {
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      
+      console.log('🎨 만평 가져오는 중...');
       
       const response = await fetch('/api/cartoons');
+      
+      if (!response.ok) {
+        throw new Error('만평을 불러오는데 실패했습니다.');
+      }
+      
       const data = await response.json();
       
       if (data.success) {
         setCartoons(data.cartoons);
+        setLastUpdate(new Date());
+        console.log(`✅ 만평 ${data.cartoons.length}개 로드 완료`);
       } else {
-        setError(data.error || '만평을 불러오는데 실패했습니다.');
+        throw new Error(data.error || '알 수 없는 오류');
       }
-    } catch (err) {
-      setError('네트워크 오류가 발생했습니다.');
-      console.error('Fetch error:', err);
+    } catch (error) {
+      console.error('만평 로딩 에러:', error);
+      if (!silent) {
+        setError(error instanceof Error ? error.message : '만평을 불러오는데 실패했습니다.');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
+  useEffect(() => {
+    fetchCartoons();
+    
+    // 1분마다 자동 새로고침 (만평은 덜 자주 업데이트)
+    const interval = setInterval(() => {
+      console.log('🔄 만평 자동 업데이트 중...');
+      fetchCartoons(true);
+    }, 60000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-100 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 text-lg font-medium">만평을 불러오는 중...</p>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-purple-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 text-lg">만평을 불러오는 중...</p>
         </div>
       </div>
     );
@@ -53,16 +78,16 @@ export default function CartoonsPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-100 flex items-center justify-center p-4">
         <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full text-center">
-          <div className="text-red-500 text-5xl mb-4">⚠️</div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">오류 발생</h2>
+          <span className="text-6xl mb-4 block">⚠️</span>
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">오류 발생</h2>
           <p className="text-gray-600 mb-6">{error}</p>
           <button
-            onClick={fetchCartoons}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200"
+            onClick={() => fetchCartoons()}
+            className="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors"
           >
-            다시 시도
+            🔄 다시 시도
           </button>
         </div>
       </div>
@@ -70,89 +95,58 @@ export default function CartoonsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto">
-        {/* 헤더 */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            🎨 오늘의 시사만평
-          </h1>
-          <p className="text-lg text-gray-600">
-            한겨레 그림판 - 총 {cartoons.length}개
-          </p>
-        </div>
-
-        {/* 만평 그리드 */}
-        {cartoons.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-gray-500 text-lg">표시할 만평이 없습니다.</p>
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-100">
+      {/* 헤더 */}
+      <header className="bg-white shadow-md">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <Link href="/" className="inline-flex items-center text-purple-600 hover:text-purple-800 mb-4">
+            ← 홈으로
+          </Link>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <span className="text-4xl">🎨</span>
+              <h1 className="text-3xl font-bold text-gray-800">오늘의 만평</h1>
+            </div>
+            <div className="text-sm text-gray-500">
+              마지막 업데이트: {lastUpdate.toLocaleTimeString('ko-KR')}
+            </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {cartoons.map((cartoon, index) => (
-              <div
-                key={index}
-                className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-shadow duration-300"
-              >
-                {/* 이미지 */}
-                <div className="relative h-64 bg-gray-100">
-                  {cartoon.imageUrl ? (
-                    <Image
-                      src={cartoon.imageUrl}
-                      alt={cartoon.title}
-                      fill
-                      className="object-contain p-4"
-                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                      priority={index < 3}
-                    />
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-gray-400">
-                      <svg className="w-20 h-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                  )}
-                </div>
+          <p className="text-gray-600 mt-2">시사만평 모음 • 총 {cartoons.length}개</p>
+        </div>
+      </header>
 
-                {/* 내용 */}
-                <div className="p-5">
-                  <h2 className="text-lg font-bold text-gray-800 mb-4 line-clamp-2 min-h-[3.5rem] hover:text-blue-600 transition-colors">
-                    {cartoon.title}
-                  </h2>
-
-                  <div className="flex items-center justify-between">
-                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                      📰 {cartoon.source}
-                    </span>
-
-                    <a
-                      href={cartoon.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center px-4 py-1.5 rounded-full text-sm font-medium bg-gray-100 text-gray-700 hover:bg-blue-600 hover:text-white transition-all duration-200"
-                    >
-                      원문 보기
-                      <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
-                    </a>
-                  </div>
+      {/* 만평 그리드 */}
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {cartoons.map((cartoon, index) => (
+            <a
+              key={index}
+              href={cartoon.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-white rounded-lg shadow-md hover:shadow-xl transition-shadow overflow-hidden"
+            >
+              <div className="aspect-square relative bg-gray-100">
+                <img
+                  src={cartoon.imageUrl}
+                  alt={cartoon.title}
+                  className="w-full h-full object-contain"
+                  loading="lazy"
+                />
+              </div>
+              <div className="p-4">
+                <h3 className="font-semibold text-gray-800 mb-2 line-clamp-2">
+                  {cartoon.title}
+                </h3>
+                <div className="flex items-center justify-between text-sm text-gray-500">
+                  <span>{cartoon.source}</span>
+                  <span>{new Date(cartoon.pubDate).toLocaleDateString('ko-KR')}</span>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* 새로고침 버튼 */}
-        <div className="text-center mt-12">
-          <button
-            onClick={fetchCartoons}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg shadow-md hover:shadow-lg transition-all duration-200"
-          >
-            🔄 새로고침
-          </button>
+            </a>
+          ))}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

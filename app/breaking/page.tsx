@@ -1,49 +1,41 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
-interface News {
-  id: string;
+interface Article {
   title: string;
-  description: string;
   link: string;
-  source: string;
   pubDate: string;
-  timeAgo: string;
+  description: string;
+  source: string;
   imageUrl?: string;
 }
 
 export default function BreakingPage() {
-  const [news, setNews] = useState<News[]>([]);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<string>('전체');
 
+  const sources = ['전체', 'SBS', '연합뉴스', 'JTBC'];
+
   useEffect(() => {
     async function fetchNews() {
       try {
-        setLoading(true);
         const response = await fetch('/api/breaking');
-        const result = await response.json();
         
-        console.log('API 응답:', result);
-        
-        if (result.success && Array.isArray(result.data)) {
-          console.log('받은 뉴스 개수:', result.data.length);
-          console.log('출처별:', result.data.reduce((acc: any, n: News) => {
-            acc[n.source] = (acc[n.source] || 0) + 1;
-            return acc;
-          }, {}));
-          setNews(result.data);
-        } else {
-          setError('속보 데이터를 불러올 수 없습니다.');
-          setNews([]);
+        if (!response.ok) {
+          throw new Error('속보를 불러오는데 실패했습니다.');
         }
+
+        const data = await response.json();
+        setArticles(data.articles || []);
+        setFilteredArticles(data.articles || []);
       } catch (err) {
         console.error('속보 로딩 에러:', err);
-        setError('속보를 불러오는 중 오류가 발생했습니다.');
-        setNews([]);
+        setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.');
       } finally {
         setLoading(false);
       }
@@ -52,42 +44,110 @@ export default function BreakingPage() {
     fetchNews();
   }, []);
 
-  const sources = ['전체', ...Array.from(new Set(news.map(n => n.source)))];
-  const filteredNews = selectedSource === '전체' 
-    ? news 
-    : news.filter(n => n.source === selectedSource);
+  useEffect(() => {
+    if (selectedSource === '전체') {
+      setFilteredArticles(articles);
+    } else {
+      setFilteredArticles(articles.filter(article => article.source === selectedSource));
+    }
+  }, [selectedSource, articles]);
 
-  console.log('현재 출처:', sources);
-  console.log('선택된 출처:', selectedSource);
-  console.log('필터된 뉴스:', filteredNews.length);
+  // 상대 시간 계산
+  const getRelativeTime = (dateString: string): string => {
+    const now = new Date();
+    const past = new Date(dateString);
+    const diffMs = now.getTime() - past.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return '방금 전';
+    if (diffMins < 60) return `${diffMins}분 전`;
+    if (diffHours < 24) return `${diffHours}시간 전`;
+    if (diffDays < 7) return `${diffDays}일 전`;
+    return past.toLocaleDateString('ko-KR');
+  };
+
+  const getSourceColor = (source: string) => {
+    switch (source) {
+      case 'SBS':
+        return 'text-blue-600';
+      case '연합뉴스':
+        return 'text-green-600';
+      case 'JTBC':
+        return 'text-red-600';
+      default:
+        return 'text-gray-600';
+    }
+  };
+
+  const getSourceEmoji = (source: string) => {
+    switch (source) {
+      case 'SBS':
+        return '📺';
+      case '연합뉴스':
+        return '📰';
+      case 'JTBC':
+        return '📡';
+      default:
+        return '📄';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">속보를 불러오는 중...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-600 text-xl mb-4">⚠️ {error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            다시 시도
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white shadow-sm sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4">
+    <div className="min-h-screen bg-white">
+      {/* 헤더 */}
+      <div className="sticky top-0 bg-white border-b border-gray-200 z-10">
+        <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-4">
             <Link 
-              href="/" 
-              className="text-blue-600 hover:text-blue-800 font-medium flex items-center gap-2"
+              href="/"
+              className="text-blue-600 hover:text-blue-800 flex items-center gap-2"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              홈으로
+              <span>←</span>
+              <span>홈으로</span>
             </Link>
-            <h1 className="text-2xl font-bold text-gray-800">속보</h1>
-            <div className="w-20"></div>
+            <h1 className="text-2xl font-bold text-gray-900">속보</h1>
+            <div className="w-16"></div> {/* 중앙 정렬용 */}
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-2">
-            {sources.map(source => (
+          {/* 필터 버튼 */}
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            {sources.map((source) => (
               <button
                 key={source}
                 onClick={() => setSelectedSource(source)}
-                className={`px-4 py-2 rounded-full whitespace-nowrap transition-colors ${
+                className={`px-6 py-2 rounded-full font-medium whitespace-nowrap transition-all ${
                   selectedSource === source
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
                 {source}
@@ -97,71 +157,73 @@ export default function BreakingPage() {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-6">
-        {loading ? (
-          <div className="flex justify-center items-center h-64">
-            <div className="text-xl text-gray-600">로딩 중...</div>
-          </div>
-        ) : error ? (
-          <div className="flex justify-center items-center h-64">
-            <div className="text-xl text-red-600">{error}</div>
-          </div>
-        ) : filteredNews.length === 0 ? (
-          <div className="flex justify-center items-center h-64">
-            <div className="text-xl text-gray-600">표시할 속보가 없습니다.</div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredNews.map((item) => (
-              <a
-                key={item.id}
-                href={item.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow p-4"
-              >
-                <div className="flex gap-4">
-                  {item.imageUrl && (
-                    <div className="flex-shrink-0 w-32 h-24 bg-gray-200 rounded overflow-hidden">
-                      <img
-                        src={item.imageUrl}
-                        alt={item.title}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.style.display = 'none';
-                        }}
-                      />
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-sm font-semibold ${
-                        item.source === 'MBC' && item.title.includes('[테스트]')
-                          ? 'text-orange-600'
-                          : 'text-blue-600'
-                      }`}>
-                        {item.source}
-                      </span>
-                      <span className="text-sm text-gray-500">
-                        {item.timeAgo}
-                      </span>
-                    </div>
-                    <h2 className="text-lg font-semibold text-gray-900 mb-2 line-clamp-2">
-                      {item.title}
-                    </h2>
-                    {item.description && (
-                      <p className="text-sm text-gray-600 line-clamp-2">
-                        {item.description}
-                      </p>
-                    )}
+      {/* 뉴스 목록 */}
+      <div className="max-w-4xl mx-auto">
+        {filteredArticles.map((article, index) => (
+          <a
+            key={index}
+            href={article.link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block border-b border-gray-100 hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex gap-4 p-4">
+              {/* 이미지 영역 - 왼쪽 */}
+              <div className="flex-shrink-0 w-28 h-28 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center">
+                {article.imageUrl ? (
+                  <img
+                    src={article.imageUrl}
+                    alt={article.title}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = 'none';
+                      const parent = target.parentElement;
+                      if (parent) {
+                        parent.innerHTML = `<div class="text-4xl">${getSourceEmoji(article.source)}</div>`;
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="text-4xl">
+                    {getSourceEmoji(article.source)}
                   </div>
+                )}
+              </div>
+
+              {/* 텍스트 영역 - 오른쪽 */}
+              <div className="flex-1 min-w-0">
+                {/* 출처 + 시간 */}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`font-bold text-sm ${getSourceColor(article.source)}`}>
+                    {article.source}
+                  </span>
+                  <span className="text-gray-400 text-sm">
+                    {getRelativeTime(article.pubDate)}
+                  </span>
                 </div>
-              </a>
-            ))}
-          </div>
-        )}
+
+                {/* 제목 */}
+                <h2 className="text-base font-bold text-gray-900 mb-2 line-clamp-2 leading-snug">
+                  {article.title}
+                </h2>
+
+                {/* 설명 */}
+                <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
+                  {article.description}
+                </p>
+              </div>
+            </div>
+          </a>
+        ))}
       </div>
+
+      {/* 결과 없음 */}
+      {filteredArticles.length === 0 && (
+        <div className="text-center py-12">
+          <p className="text-gray-500">해당 출처의 뉴스가 없습니다.</p>
+        </div>
+      )}
     </div>
   );
 }

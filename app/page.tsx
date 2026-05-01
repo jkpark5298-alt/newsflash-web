@@ -1,294 +1,301 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
+import Image from 'next/image';
+
+interface Article {
+  title: string;
+  link: string;
+  pubDate: string;
+  description: string;
+  source: string;
+  imageUrl?: string;
+}
 
 interface Cartoon {
   title: string;
   imageUrl: string;
   link: string;
   source: string;
-}
-
-interface NewsItem {
-  id: string;
-  title: string;
-  description: string;
-  link: string;
-  source: string;
   pubDate: string;
-  timeAgo: string;
 }
 
 export default function Home() {
+  const [breakingNews, setBreakingNews] = useState<Article[]>([]);
   const [cartoons, setCartoons] = useState<Cartoon[]>([]);
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [loadingCartoons, setLoadingCartoons] = useState(true);
-  const [loadingNews, setLoadingNews] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchCartoons();
+    async function fetchNews() {
+      try {
+        // 속보 가져오기
+        const breakingResponse = await fetch('/api/breaking');
+        if (!breakingResponse.ok) {
+          throw new Error('뉴스를 불러오는데 실패했습니다.');
+        }
+        const breakingData = await breakingResponse.json();
+        setBreakingNews(breakingData.articles || []);
+
+        // 시사만평 가져오기
+        const cartoonsResponse = await fetch('/api/cartoons');
+        if (cartoonsResponse.ok) {
+          const cartoonsData = await cartoonsResponse.json();
+          setCartoons(cartoonsData.cartoons || []);
+        }
+      } catch (err) {
+        console.error('뉴스 로딩 에러:', err);
+        setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    }
+
     fetchNews();
+    const interval = setInterval(fetchNews, 300000); // 5분마다 갱신
+
+    return () => clearInterval(interval);
   }, []);
 
-  const fetchCartoons = async () => {
-    try {
-      setLoadingCartoons(true);
-      const response = await fetch('/api/cartoons');
-      const data = await response.json();
-      
-      if (data.success) {
-        setCartoons(data.cartoons.slice(0, 3));
-      }
-    } catch (err) {
-      console.error('Fetch cartoons error:', err);
-    } finally {
-      setLoadingCartoons(false);
+  const getSourceEmoji = (source: string) => {
+    switch (source) {
+      case 'SBS':
+        return '📺';
+      case '연합뉴스':
+        return '📰';
+      case 'JTBC':
+        return '📡';
+      case '경향신문':
+        return '📰';
+      case '한겨레':
+        return '📰';
+      default:
+        return '📄';
     }
   };
 
-  const fetchNews = async () => {
-    try {
-      setLoadingNews(true);
-      const response = await fetch('/api/breaking');
-      const data = await response.json();
-      
-      if (data.success && Array.isArray(data.data)) {
-        setNews(data.data.slice(0, 5));
-      }
-    } catch (err) {
-      console.error('Fetch news error:', err);
-    } finally {
-      setLoadingNews(false);
+  const getSourceColor = (source: string) => {
+    switch (source) {
+      case 'SBS':
+        return 'text-blue-600';
+      case '연합뉴스':
+        return 'text-green-600';
+      case 'JTBC':
+        return 'text-red-600';
+      case '경향신문':
+        return 'text-purple-600';
+      case '한겨레':
+        return 'text-indigo-600';
+      default:
+        return 'text-gray-600';
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">뉴스를 불러오는 중...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-600 text-xl mb-4">⚠️ {error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            다시 시도
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
       {/* 헤더 */}
-      <header className="bg-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <h1 className="text-3xl font-bold text-gray-900">
-              📰 NewsFlash
-            </h1>
-            <nav className="flex gap-4">
-              <Link 
-                href="/breaking"
-                className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium"
-              >
-                ⚡ 속보
-              </Link>
-              <Link 
-                href="/cartoons"
-                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
-              >
-                🎨 만평
-              </Link>
-            </nav>
+      <header className="bg-white shadow-md sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-4 py-4">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">📰</span>
+            <h1 className="text-3xl font-bold text-gray-800">뉴스플래시</h1>
           </div>
+          <p className="text-gray-600 mt-2">실시간 뉴스를 한눈에</p>
         </div>
       </header>
 
-      {/* 메인 컨텐츠 */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* 환영 섹션 */}
-        <section className="text-center mb-16">
-          <h2 className="text-5xl font-bold text-gray-900 mb-4">
-            오늘의 뉴스를 한눈에
-          </h2>
-          <p className="text-xl text-gray-600">
-            속보와 시사만평으로 보는 세상 이야기
-          </p>
-        </section>
-
+      <main className="max-w-6xl mx-auto px-4 py-8">
         {/* 속보 섹션 */}
-        <section className="mb-16">
-          <div className="flex items-center justify-between mb-8">
-            <h3 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-              ⚡ 최신 속보
-            </h3>
+        <section className="mb-12">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">🚨</span>
+              <h2 className="text-3xl font-bold text-gray-800">속보</h2>
+            </div>
             <Link 
               href="/breaking"
-              className="text-red-600 hover:text-red-700 font-semibold flex items-center gap-2 group"
+              className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
             >
-              전체보기
-              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
+              전체보기 →
             </Link>
           </div>
 
-          {loadingNews ? (
-            <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="animate-pulse flex items-center gap-4">
-                  <div className="w-8 h-8 bg-gray-200 rounded-full"></div>
-                  <div className="flex-1">
-                    <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                    <div className="h-3 bg-gray-200 rounded w-1/4"></div>
+          {breakingNews.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {breakingNews.slice(0, 12).map((article, index) => (
+                <a
+                  key={index}
+                  href={article.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden group"
+                >
+                  {/* 이미지 */}
+                  {article.imageUrl && (
+                    <div className="relative w-full h-48 overflow-hidden bg-gray-100">
+                      <Image
+                        src={article.imageUrl}
+                        alt={article.title}
+                        fill
+                        className="object-cover group-hover:scale-105 transition-transform duration-300"
+                        unoptimized
+                      />
+                    </div>
+                  )}
+                  
+                  {/* 콘텐츠 */}
+                  <div className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-xs font-semibold ${getSourceColor(article.source)}`}>
+                        {getSourceEmoji(article.source)} {article.source}
+                      </span>
+                      <span className="text-gray-400 text-xs">
+                        {new Date(article.pubDate).toLocaleTimeString('ko-KR', { 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        })}
+                      </span>
+                    </div>
+                    <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 line-clamp-2 mb-2">
+                      {article.title}
+                    </h3>
+                    <p className="text-sm text-gray-600 line-clamp-2">
+                      {article.description}
+                    </p>
                   </div>
-                </div>
+                </a>
               ))}
             </div>
-          ) : news.length > 0 ? (
-            <div className="bg-white rounded-lg shadow-md overflow-hidden">
-              <div className="divide-y divide-gray-100">
-                {news.map((item, index) => (
-                  <a
-                    key={item.id}
-                    href={item.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-start gap-4 p-5 hover:bg-gray-50 transition-colors group"
-                  >
-                    <div className="flex-shrink-0 w-8 h-8 bg-red-100 rounded-full flex items-center justify-center text-red-600 font-bold">
-                      {index + 1}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-lg font-semibold text-gray-900 group-hover:text-red-600 transition-colors mb-2 line-clamp-2">
-                        {item.title}
-                      </h4>
-                      <div className="flex items-center gap-3 text-sm text-gray-500">
-                        <span className="font-medium">{item.source}</span>
-                        <span>•</span>
-                        <span>{item.timeAgo}</span>
-                      </div>
-                    </div>
-                    <svg className="w-5 h-5 text-gray-400 group-hover:text-red-600 group-hover:translate-x-1 transition-all flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </a>
-                ))}
-              </div>
-            </div>
           ) : (
-            <div className="text-center py-12 bg-white rounded-lg shadow-md">
-              <p className="text-gray-500 text-lg">표시할 속보가 없습니다.</p>
+            <div className="bg-white rounded-xl shadow-md p-8 text-center">
+              <p className="text-gray-500">속보를 불러오는 중...</p>
             </div>
           )}
         </section>
 
-        {/* 오늘의 만평 미리보기 */}
-        <section className="mb-16">
-          <div className="flex items-center justify-between mb-8">
-            <h3 className="text-3xl font-bold text-gray-900">
-              🎨 오늘의 시사만평
-            </h3>
+        {/* 시사만평 섹션 */}
+        <section className="mb-12">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">🎨</span>
+              <h2 className="text-3xl font-bold text-gray-800">시사만평</h2>
+            </div>
             <Link 
               href="/cartoons"
-              className="text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-2 group"
+              className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
             >
-              전체보기
-              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
+              전체보기 →
             </Link>
           </div>
 
-          {loadingCartoons ? (
+          {cartoons.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="bg-white rounded-lg shadow-md overflow-hidden animate-pulse">
-                  <div className="h-64 bg-gray-200"></div>
-                  <div className="p-5">
-                    <div className="h-4 bg-gray-200 rounded mb-2"></div>
-                    <div className="h-4 bg-gray-200 rounded w-2/3"></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : cartoons.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {cartoons.map((cartoon, index) => (
-                <div
+              {cartoons.slice(0, 3).map((cartoon, index) => (
+                <a
                   key={index}
-                  className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1"
+                  href={cartoon.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden group"
                 >
-                  <div className="relative h-64 bg-gray-100">
-                    {cartoon.imageUrl ? (
-                      <Image
-                        src={cartoon.imageUrl}
-                        alt={cartoon.title}
-                        fill
-                        className="object-contain p-4"
-                        sizes="(max-width: 768px) 100vw, 33vw"
-                        priority={index === 0}
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-gray-400">
-                        <svg className="w-20 h-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                      </div>
-                    )}
+                  {/* 만평 이미지 */}
+                  <div className="relative w-full h-64 overflow-hidden bg-gray-100">
+                    <Image
+                      src={cartoon.imageUrl}
+                      alt={cartoon.title}
+                      fill
+                      className="object-contain group-hover:scale-105 transition-transform duration-300"
+                      unoptimized
+                    />
                   </div>
-
-                  <div className="p-5">
-                    <h4 className="text-lg font-bold text-gray-800 mb-3 line-clamp-2 min-h-[3.5rem]">
-                      {cartoon.title}
-                    </h4>
-
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                        📰 {cartoon.source}
+                  
+                  {/* 콘텐츠 */}
+                  <div className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-xs font-semibold ${getSourceColor(cartoon.source)}`}>
+                        {getSourceEmoji(cartoon.source)} {cartoon.source}
                       </span>
-
-                      <a
-                        href={cartoon.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-700 font-medium text-sm flex items-center gap-1"
-                      >
-                        원문
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </a>
+                      <span className="text-gray-400 text-xs">
+                        {new Date(cartoon.pubDate).toLocaleDateString('ko-KR')}
+                      </span>
                     </div>
+                    <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 line-clamp-2">
+                      {cartoon.title}
+                    </h3>
                   </div>
-                </div>
+                </a>
               ))}
             </div>
           ) : (
-            <div className="text-center py-12 bg-white rounded-lg shadow-md">
-              <p className="text-gray-500 text-lg">표시할 만평이 없습니다.</p>
+            <div className="bg-white rounded-xl shadow-md p-8 text-center">
+              <p className="text-gray-500">시사만평을 불러오는 중...</p>
             </div>
           )}
         </section>
 
-        {/* 추가 기능 안내 */}
-        <section className="bg-white rounded-lg shadow-md p-8 text-center">
-          <h3 className="text-2xl font-bold text-gray-900 mb-4">
-            더 많은 기능이 곧 추가됩니다!
-          </h3>
-          <p className="text-gray-600 mb-6">
-            날씨, 환율 등 다양한 정보를 한곳에서 확인하세요.
-          </p>
-          <div className="flex flex-wrap justify-center gap-4">
-            <div className="px-6 py-3 bg-gray-100 rounded-lg">
-              <span className="text-2xl">🌤️</span>
-              <p className="text-sm text-gray-600 mt-1">날씨</p>
-            </div>
-            <div className="px-6 py-3 bg-gray-100 rounded-lg">
-              <span className="text-2xl">💱</span>
-              <p className="text-sm text-gray-600 mt-1">환율</p>
-            </div>
-            <div className="px-6 py-3 bg-gray-100 rounded-lg">
-              <span className="text-2xl">📈</span>
-              <p className="text-sm text-gray-600 mt-1">주식</p>
+        {/* 카테고리 링크 */}
+        <section className="mb-12">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6">카테고리별 뉴스</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Link 
+              href="/breaking"
+              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
+            >
+              <div className="text-4xl mb-2">🚨</div>
+              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">속보</h3>
+            </Link>
+            
+            <Link 
+              href="/international"
+              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
+            >
+              <div className="text-4xl mb-2">🌍</div>
+              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">국제</h3>
+            </Link>
+            
+            <Link 
+              href="/cartoons"
+              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
+            >
+              <div className="text-4xl mb-2">🎨</div>
+              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">시사만평</h3>
+            </Link>
+            
+            <div className="bg-white rounded-xl shadow-md p-6 text-center opacity-50 cursor-not-allowed">
+              <div className="text-4xl mb-2">📊</div>
+              <h3 className="font-bold text-gray-400">준비중</h3>
             </div>
           </div>
         </section>
       </main>
-
-      {/* 푸터 */}
-      <footer className="bg-white mt-16 border-t">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center text-gray-600">
-          <p>© 2024 NewsFlash. All rights reserved.</p>
-        </div>
-      </footer>
     </div>
   );
 }
