@@ -21,25 +21,40 @@ interface Cartoon {
   pubDate: string;
 }
 
+interface CommunityIssue {
+  id: string;
+  title: string;
+  link: string;
+  source: '클리앙' | '뽐뿌';
+  pubDate: string;
+  summary: string;
+  detail: string;
+  category: string;
+}
+
 export default function Home() {
   const [breakingNews, setBreakingNews] = useState<Article[]>([]);
   const [cartoons, setCartoons] = useState<Cartoon[]>([]);
+  const [communityIssues, setCommunityIssues] = useState<CommunityIssue[]>([]);
+  const [expandedCommunityId, setExpandedCommunityId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [communityLoading, setCommunityLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchNews() {
       try {
-        // 속보 가져오기
         const breakingResponse = await fetch('/api/breaking');
+
         if (!breakingResponse.ok) {
           throw new Error('뉴스를 불러오는데 실패했습니다.');
         }
+
         const breakingData = await breakingResponse.json();
         setBreakingNews(breakingData.articles || []);
 
-        // 시사만평 가져오기
         const cartoonsResponse = await fetch('/api/cartoons');
+
         if (cartoonsResponse.ok) {
           const cartoonsData = await cartoonsResponse.json();
           setCartoons(cartoonsData.cartoons || []);
@@ -52,17 +67,47 @@ export default function Home() {
       }
     }
 
-    fetchNews();
-    const interval = setInterval(fetchNews, 300000); // 5분마다 갱신
+    async function fetchCommunityIssues() {
+      try {
+        setCommunityLoading(true);
 
-    return () => clearInterval(interval);
+        const communityResponse = await fetch('/api/community');
+
+        if (!communityResponse.ok) {
+          return;
+        }
+
+        const communityData = await communityResponse.json();
+        setCommunityIssues(communityData.issues || []);
+      } catch (err) {
+        console.error('커뮤니티 이슈 로딩 에러:', err);
+        setCommunityIssues([]);
+      } finally {
+        setCommunityLoading(false);
+      }
+    }
+
+    fetchNews();
+    fetchCommunityIssues();
+
+    const newsInterval = setInterval(fetchNews, 300000);
+    const communityInterval = setInterval(fetchCommunityIssues, 300000);
+
+    return () => {
+      clearInterval(newsInterval);
+      clearInterval(communityInterval);
+    };
   }, []);
 
   const getSourceEmoji = (source: string) => {
     switch (source) {
       case 'SBS':
+      case 'SBS 주요뉴스':
         return '📺';
+      case 'MBC':
+        return '📡';
       case '연합뉴스':
+      case '연합뉴스TV':
         return '📰';
       case 'JTBC':
         return '📡';
@@ -70,6 +115,10 @@ export default function Home() {
         return '📰';
       case '한겨레':
         return '📰';
+      case '클리앙':
+        return '💬';
+      case '뽐뿌':
+        return '🔥';
       default:
         return '📄';
     }
@@ -78,8 +127,12 @@ export default function Home() {
   const getSourceColor = (source: string) => {
     switch (source) {
       case 'SBS':
+      case 'SBS 주요뉴스':
         return 'text-blue-600';
+      case 'MBC':
+        return 'text-purple-600';
       case '연합뉴스':
+      case '연합뉴스TV':
         return 'text-green-600';
       case 'JTBC':
         return 'text-red-600';
@@ -87,9 +140,30 @@ export default function Home() {
         return 'text-purple-600';
       case '한겨레':
         return 'text-indigo-600';
+      case '클리앙':
+        return 'text-orange-600';
+      case '뽐뿌':
+        return 'text-pink-600';
       default:
         return 'text-gray-600';
     }
+  };
+
+  const getFormattedTime = (dateString: string) => {
+    const date = new Date(dateString);
+
+    if (Number.isNaN(date.getTime())) {
+      return '시간 정보 없음';
+    }
+
+    return date.toLocaleTimeString('ko-KR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const toggleCommunityDetail = (issueId: string) => {
+    setExpandedCommunityId((currentId) => (currentId === issueId ? null : issueId));
   };
 
   if (loading) {
@@ -108,7 +182,7 @@ export default function Home() {
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
         <div className="text-center">
           <p className="text-red-600 text-xl mb-4">⚠️ {error}</p>
-          <button 
+          <button
             onClick={() => window.location.reload()}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
@@ -140,7 +214,7 @@ export default function Home() {
               <span className="text-3xl">🚨</span>
               <h2 className="text-3xl font-bold text-gray-800">속보</h2>
             </div>
-            <Link 
+            <Link
               href="/breaking"
               className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
             >
@@ -170,7 +244,7 @@ export default function Home() {
                       />
                     </div>
                   )}
-                  
+
                   {/* 콘텐츠 */}
                   <div className="p-4">
                     <div className="flex items-center gap-2 mb-2">
@@ -178,18 +252,13 @@ export default function Home() {
                         {getSourceEmoji(article.source)} {article.source}
                       </span>
                       <span className="text-gray-400 text-xs">
-                        {new Date(article.pubDate).toLocaleTimeString('ko-KR', { 
-                          hour: '2-digit', 
-                          minute: '2-digit' 
-                        })}
+                        {getFormattedTime(article.pubDate)}
                       </span>
                     </div>
                     <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 line-clamp-2 mb-2">
                       {article.title}
                     </h3>
-                    <p className="text-sm text-gray-600 line-clamp-2">
-                      {article.description}
-                    </p>
+                    <p className="text-sm text-gray-600 line-clamp-2">{article.description}</p>
                   </div>
                 </a>
               ))}
@@ -201,6 +270,94 @@ export default function Home() {
           )}
         </section>
 
+        {/* 커뮤니티 이슈 섹션 */}
+        <section className="mb-12">
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-3xl">💬</span>
+                <h2 className="text-3xl font-bold text-gray-800">커뮤니티 이슈</h2>
+              </div>
+              <p className="text-sm text-gray-600">
+                클리앙과 뽐뿌에서 올라오는 이용자 반응 기반 이슈입니다.
+              </p>
+              <p className="text-xs text-amber-700 mt-1">
+                커뮤니티 이슈는 검증된 뉴스가 아니므로 원문에서 맥락을 확인하세요.
+              </p>
+            </div>
+          </div>
+
+          {communityLoading ? (
+            <div className="bg-white rounded-xl shadow-md p-8 text-center">
+              <p className="text-gray-500">커뮤니티 이슈를 불러오는 중...</p>
+            </div>
+          ) : communityIssues.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {communityIssues.slice(0, 6).map((issue) => {
+                const isExpanded = expandedCommunityId === issue.id;
+
+                return (
+                  <article
+                    key={issue.id}
+                    className="bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 p-5"
+                  >
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className={`text-xs font-semibold ${getSourceColor(issue.source)}`}>
+                        {getSourceEmoji(issue.source)} {issue.source}
+                      </span>
+                      <span className="text-gray-300 text-xs">·</span>
+                      <span className="text-gray-500 text-xs">{issue.category}</span>
+                      <span className="text-gray-300 text-xs">·</span>
+                      <span className="text-gray-400 text-xs">
+                        {getFormattedTime(issue.pubDate)}
+                      </span>
+                    </div>
+
+                    <h3 className="font-semibold text-gray-800 line-clamp-2 mb-2">
+                      {issue.title}
+                    </h3>
+
+                    <p className="text-sm text-gray-600 line-clamp-2 mb-4">{issue.summary}</p>
+
+                    {isExpanded && (
+                      <div className="bg-amber-50 border border-amber-100 rounded-lg p-4 mb-4">
+                        <p className="text-xs font-semibold text-amber-700 mb-2">세부내용</p>
+                        <p className="text-sm text-gray-700 leading-relaxed">{issue.detail}</p>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleCommunityDetail(issue.id)}
+                        className="text-sm font-semibold text-blue-600 hover:text-blue-800"
+                      >
+                        {isExpanded ? '접기' : '자세히 보기'}
+                      </button>
+
+                      <a
+                        href={issue.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-semibold text-gray-600 hover:text-gray-900"
+                      >
+                        원문보기 →
+                      </a>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl shadow-md p-8 text-center">
+              <p className="text-gray-500">커뮤니티 이슈를 불러오지 못했습니다.</p>
+              <p className="text-xs text-gray-400 mt-2">
+                커뮤니티 사이트 구조 변경 또는 접근 제한이 있을 수 있습니다.
+              </p>
+            </div>
+          )}
+        </section>
+
         {/* 시사만평 섹션 */}
         <section className="mb-12">
           <div className="flex items-center justify-between mb-6">
@@ -208,7 +365,7 @@ export default function Home() {
               <span className="text-3xl">🎨</span>
               <h2 className="text-3xl font-bold text-gray-800">시사만평</h2>
             </div>
-            <Link 
+            <Link
               href="/cartoons"
               className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
             >
@@ -236,7 +393,7 @@ export default function Home() {
                       unoptimized
                     />
                   </div>
-                  
+
                   {/* 콘텐츠 */}
                   <div className="p-4">
                     <div className="flex items-center gap-2 mb-2">
@@ -265,30 +422,30 @@ export default function Home() {
         <section className="mb-12">
           <h2 className="text-2xl font-bold text-gray-800 mb-6">카테고리별 뉴스</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Link 
+            <Link
               href="/breaking"
               className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
             >
               <div className="text-4xl mb-2">🚨</div>
               <h3 className="font-bold text-gray-800 group-hover:text-blue-600">속보</h3>
             </Link>
-            
-            <Link 
+
+            <Link
               href="/international"
               className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
             >
               <div className="text-4xl mb-2">🌍</div>
               <h3 className="font-bold text-gray-800 group-hover:text-blue-600">국제</h3>
             </Link>
-            
-            <Link 
+
+            <Link
               href="/cartoons"
               className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
             >
               <div className="text-4xl mb-2">🎨</div>
               <h3 className="font-bold text-gray-800 group-hover:text-blue-600">시사만평</h3>
             </Link>
-            
+
             <div className="bg-white rounded-xl shadow-md p-6 text-center opacity-50 cursor-not-allowed">
               <div className="text-4xl mb-2">📊</div>
               <h3 className="font-bold text-gray-400">준비중</h3>
