@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 
@@ -98,6 +98,30 @@ export default function Home() {
       clearInterval(communityInterval);
     };
   }, []);
+
+  const featuredCommunityIssues = useMemo(() => {
+    const clienIssues = communityIssues.filter((issue) => issue.source === '클리앙').slice(0, 3);
+    const ppomppuIssues = communityIssues.filter((issue) => issue.source === '뽐뿌').slice(0, 3);
+
+    const mixedIssues: CommunityIssue[] = [];
+    const maxLength = Math.max(clienIssues.length, ppomppuIssues.length);
+
+    for (let index = 0; index < maxLength; index += 1) {
+      if (clienIssues[index]) {
+        mixedIssues.push(clienIssues[index]);
+      }
+
+      if (ppomppuIssues[index]) {
+        mixedIssues.push(ppomppuIssues[index]);
+      }
+    }
+
+    if (mixedIssues.length > 0) {
+      return mixedIssues.slice(0, 6);
+    }
+
+    return communityIssues.slice(0, 6);
+  }, [communityIssues]);
 
   const getSourceEmoji = (source: string) => {
     switch (source) {
@@ -232,7 +256,6 @@ export default function Home() {
                   rel="noopener noreferrer"
                   className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden group"
                 >
-                  {/* 이미지 */}
                   {article.imageUrl && (
                     <div className="relative w-full h-48 overflow-hidden bg-gray-100">
                       <Image
@@ -245,7 +268,6 @@ export default function Home() {
                     </div>
                   )}
 
-                  {/* 콘텐츠 */}
                   <div className="p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`text-xs font-semibold ${getSourceColor(article.source)}`}>
@@ -285,15 +307,22 @@ export default function Home() {
                 커뮤니티 이슈는 검증된 뉴스가 아니므로 원문에서 맥락을 확인하세요.
               </p>
             </div>
+
+            <Link
+              href="/community"
+              className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1 whitespace-nowrap pt-2"
+            >
+              전체보기 →
+            </Link>
           </div>
 
           {communityLoading ? (
             <div className="bg-white rounded-xl shadow-md p-8 text-center">
               <p className="text-gray-500">커뮤니티 이슈를 불러오는 중...</p>
             </div>
-          ) : communityIssues.length > 0 ? (
+          ) : featuredCommunityIssues.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {communityIssues.slice(0, 6).map((issue) => {
+              {featuredCommunityIssues.map((issue) => {
                 const isExpanded = expandedCommunityId === issue.id;
 
                 return (
@@ -383,7 +412,6 @@ export default function Home() {
                   rel="noopener noreferrer"
                   className="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden group"
                 >
-                  {/* 만평 이미지 */}
                   <div className="relative w-full h-64 overflow-hidden bg-gray-100">
                     <Image
                       src={cartoon.imageUrl}
@@ -394,7 +422,6 @@ export default function Home() {
                     />
                   </div>
 
-                  {/* 콘텐츠 */}
                   <div className="p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`text-xs font-semibold ${getSourceColor(cartoon.source)}`}>
@@ -446,10 +473,13 @@ export default function Home() {
               <h3 className="font-bold text-gray-800 group-hover:text-blue-600">시사만평</h3>
             </Link>
 
-            <div className="bg-white rounded-xl shadow-md p-6 text-center opacity-50 cursor-not-allowed">
-              <div className="text-4xl mb-2">📊</div>
-              <h3 className="font-bold text-gray-400">준비중</h3>
-            </div>
+            <Link
+              href="/community"
+              className="bg-white rounded-xl shadow-md p-6 text-center hover:shadow-xl transition-all duration-300 group"
+            >
+              <div className="text-4xl mb-2">💬</div>
+              <h3 className="font-bold text-gray-800 group-hover:text-blue-600">커뮤니티</h3>
+            </Link>
           </div>
         </section>
       </main>
