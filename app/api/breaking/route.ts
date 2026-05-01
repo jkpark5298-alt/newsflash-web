@@ -90,11 +90,51 @@ const RSS_FEEDS: RSSFeedConfig[] = [
 const YTN_BREAKING_URL = 'https://www.ytn.co.kr/news/list.php?mcd=0133';
 const YTN_RECENT_URL = 'https://www.ytn.co.kr/news/list.php?mcd=recentnews';
 
+const YTN_BREAKING_LIMIT = 8;
+const YTN_RECENT_LIMIT = 8;
+
 const FETCH_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 };
+
+const YTN_EXCLUDED_TITLE_KEYWORDS = [
+  '나이트포커스',
+  '이게웬날리',
+  '뉴스퀘어',
+  '뉴스나이트',
+  '더뉴스',
+  '뉴스UP',
+  '뉴스 ON',
+  '뉴스ON',
+  '뉴스와이드',
+  '굿모닝 와이티엔',
+  '굿모닝 YTN',
+  'YTN24',
+  'YTN 라디오',
+  '돌발영상',
+  '자막뉴스',
+  '앵커리포트',
+  '뉴스라이더',
+  '이 시각 세계',
+  '날씨',
+  '제보',
+  '다시보기',
+  '라이브',
+  '실시간',
+  '편성표'
+];
+
+const YTN_EXCLUDED_LINK_KEYWORDS = [
+  'live',
+  'program',
+  'replay',
+  'vod',
+  'schedule',
+  'radio',
+  'weather'
+];
 
 function extractImageUrl(item: RSSItem): string | undefined {
   try {
@@ -203,7 +243,8 @@ function cleanDescription(description: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'");
+    .replace(/&#x27;/g, "'")
+    .replace(/&apos;/g, "'");
 
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
@@ -220,8 +261,8 @@ function cleanDescription(description: string): string {
 
 function cleanTitle(title: string): string {
   return cleanDescription(title)
-    .replace(/^속보\s*/g, '')
-    .replace(/^\[속보\]\s*/g, '[속보] ')
+    .replace(/^\[?\s*속보\s*\]?\s*/g, '[속보] ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -340,7 +381,9 @@ function makeAbsoluteUrl(baseUrl: string, href: string): string {
 function extractYtnDateFromHtml(fragment: string): string {
   const now = new Date();
 
-  const dateTimeMatch = fragment.match(/(\d{4})[-.](\d{1,2})[-.](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  const dateTimeMatch = fragment.match(
+    /(\d{4})[-.](\d{1,2})[-.](\d{1,2})\s+(\d{1,2}):(\d{2})/
+  );
 
   if (dateTimeMatch) {
     const [, year, month, day, hour, minute] = dateTimeMatch;
@@ -388,16 +431,100 @@ function extractYtnImageFromFragment(fragment: string): string | undefined {
   return makeAbsoluteUrl('https://www.ytn.co.kr', imgMatch[1]);
 }
 
+function isYtnMenuOrProgramTitle(title: string): boolean {
+  const normalizedTitle = title.replace(/\s+/g, '').toLowerCase();
+
+  return YTN_EXCLUDED_TITLE_KEYWORDS.some((keyword) => {
+    const normalizedKeyword = keyword.replace(/\s+/g, '').toLowerCase();
+    return normalizedTitle.includes(normalizedKeyword);
+  });
+}
+
+function isYtnMenuOrProgramLink(link: string): boolean {
+  const normalizedLink = link.toLowerCase();
+
+  return YTN_EXCLUDED_LINK_KEYWORDS.some((keyword) => normalizedLink.includes(keyword));
+}
+
+function isValidYtnArticle(title: string, link: string): boolean {
+  const cleanedTitle = title.trim();
+
+  if (!cleanedTitle) {
+    return false;
+  }
+
+  if (cleanedTitle.length < 8) {
+    return false;
+  }
+
+  if (isYtnMenuOrProgramTitle(cleanedTitle)) {
+    return false;
+  }
+
+  if (isYtnMenuOrProgramLink(link)) {
+    return false;
+  }
+
+  const hasArticleLikeLink =
+    link.includes('/_ln/') ||
+    link.includes('/ln/') ||
+    link.includes('news_id=') ||
+    link.includes('key=');
+
+  if (!hasArticleLikeLink) {
+    return false;
+  }
+
+  return true;
+}
+
+function extractYtnTitleFromFragment(fragment: string): string {
+  const titleCandidates: string[] = [];
+
+  const strongMatch = fragment.match(/<strong[^>]*>([\s\S]*?)<\/strong>/i);
+  const titleClassMatch = fragment.match(
+    /<(?:span|p|div)[^>]+class=["'][^"']*(?:title|tit|subject|headline)[^"']*["'][^>]*>([\s\S]*?)<\/(?:span|p|div)>/i
+  );
+  const imgAltMatch = fragment.match(/<img[^>]+alt=["']([^"']+)["']/i);
+
+  if (strongMatch?.[1]) {
+    titleCandidates.push(strongMatch[1]);
+  }
+
+  if (titleClassMatch?.[1]) {
+    titleCandidates.push(titleClassMatch[1]);
+  }
+
+  if (imgAltMatch?.[1]) {
+    titleCandidates.push(imgAltMatch[1]);
+  }
+
+  titleCandidates.push(fragment);
+
+  for (const candidate of titleCandidates) {
+    const title = cleanTitle(candidate)
+      .replace(/^YTN\s*/i, '')
+      .replace(/^뉴스\s*/g, '')
+      .trim();
+
+    if (title.length >= 8 && !isYtnMenuOrProgramTitle(title)) {
+      return title;
+    }
+  }
+
+  return '';
+}
+
 function parseYtnArticles(html: string, source: string, limit: number): Article[] {
   const articles: Article[] = [];
   const seenLinks = new Set<string>();
 
-  const blockRegex =
-    /<a[^>]+href=["']([^"']*(?:\/_ln\/|\/news\/|view\.php|list\.php\?[^"']*key=)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const linkRegex =
+    /<a[^>]+href=["']([^"']*(?:\/_ln\/|\/ln\/|news_id=|key=)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
 
   let match: RegExpExecArray | null;
 
-  while ((match = blockRegex.exec(html)) !== null && articles.length < limit) {
+  while ((match = linkRegex.exec(html)) !== null && articles.length < limit) {
     const href = match[1];
     const fragment = match[2];
 
@@ -411,16 +538,9 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
       continue;
     }
 
-    const title = cleanTitle(fragment);
+    const title = extractYtnTitleFromFragment(fragment);
 
-    if (!title || title.length < 6) {
-      continue;
-    }
-
-    if (
-      title.includes('YTN') &&
-      title.length < 12
-    ) {
+    if (!isValidYtnArticle(title, link)) {
       continue;
     }
 
@@ -430,7 +550,10 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
       title,
       link,
       pubDate: extractYtnDateFromHtml(fragment),
-      description: source === 'YTN 속보' ? 'YTN 공식 속보 목록에서 수집한 기사입니다.' : 'YTN 최신뉴스 목록에서 수집한 기사입니다.',
+      description:
+        source === 'YTN 속보'
+          ? 'YTN 공식 속보 목록에서 수집한 기사입니다.'
+          : 'YTN 최신뉴스 목록에서 수집한 기사입니다.',
       source,
       imageUrl: extractYtnImageFromFragment(fragment)
     });
@@ -442,7 +565,7 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
 async function fetchYtnBreakingNews(): Promise<Article[]> {
   try {
     const html = await fetchText(YTN_BREAKING_URL);
-    return parseYtnArticles(html, 'YTN 속보', 15);
+    return parseYtnArticles(html, 'YTN 속보', YTN_BREAKING_LIMIT);
   } catch (error) {
     console.error('YTN 속보 수집 실패:', error);
     return [];
@@ -452,7 +575,7 @@ async function fetchYtnBreakingNews(): Promise<Article[]> {
 async function fetchYtnRecentNews(): Promise<Article[]> {
   try {
     const html = await fetchText(YTN_RECENT_URL);
-    return parseYtnArticles(html, 'YTN 최신뉴스', 10);
+    return parseYtnArticles(html, 'YTN 최신뉴스', YTN_RECENT_LIMIT);
   } catch (error) {
     console.error('YTN 최신뉴스 수집 실패:', error);
     return [];
