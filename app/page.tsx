@@ -1204,19 +1204,25 @@ export default function Home() {
           <div className="bg-white rounded-2xl shadow-md p-4">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
               {[
-                "경제 현황판",
-                "TOP 3",
-                "주요 속보",
-                "경제 뉴스",
-                "커뮤니티 반응",
-                "시사만평",
-              ].map((label) => (
-                <div
-                  key={label}
-                  className="flex items-center justify-center rounded-xl bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-800"
+                { label: "경제 현황판", targetId: "economy-dashboard" },
+                { label: "TOP 3", targetId: "top-issues" },
+                { label: "주요 속보", targetId: "breaking-news" },
+                { label: "경제 뉴스", targetId: "economy-news" },
+                { label: "커뮤니티 반응", targetId: "community-reactions" },
+                { label: "시사만평", targetId: "cartoon-section" },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() =>
+                    document
+                      .getElementById(item.targetId)
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  }
+                  className="flex items-center justify-center rounded-xl bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-800 transition hover:bg-blue-50 hover:text-blue-700"
                 >
-                  {label}
-                </div>
+                  {item.label}
+                </button>
               ))}
             </div>
           </div>
@@ -1643,7 +1649,7 @@ export default function Home() {
           </section>
         )}
 
-        <section className="mb-12">
+        <section id="economy-dashboard" className="mb-12 scroll-mt-32">
           <div className="flex items-start justify-between gap-4 mb-5">
             <div>
               <div className="flex items-center gap-3">
@@ -1757,7 +1763,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="mb-12">
+        <section id="top-issues" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
               <span className="text-3xl">⭐</span>
@@ -1804,7 +1810,7 @@ export default function Home() {
           )}
         </section>
 
-        <section className="mb-12">
+        <section id="breaking-news" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
               <span className="text-3xl">🚨</span>
@@ -1826,7 +1832,7 @@ export default function Home() {
           {renderNewsList(breakingNews, "주요 속보를 불러오는 중...", 8)}
         </section>
 
-        <section className="mb-12">
+        <section id="economy-news" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
               <span className="text-3xl">💰</span>
@@ -1846,7 +1852,7 @@ export default function Home() {
           )}
         </section>
 
-        <section className="mb-12">
+        <section id="community-reactions" className="mb-12 scroll-mt-32">
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
               <div className="flex items-center gap-3 mb-2">
@@ -1893,7 +1899,7 @@ export default function Home() {
           )}
         </section>
 
-        <section className="mb-12">
+        <section id="cartoon-section" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <span className="text-3xl">🎨</span>
