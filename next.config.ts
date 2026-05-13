@@ -2,11 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: 'flexible.img.hani.co.kr',
-        pathname: '/**',
+        protocol: "https",
+        hostname: "**",
+        pathname: "/**",
       },
     ],
   },
