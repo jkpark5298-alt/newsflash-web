@@ -33,6 +33,7 @@ export default function BreakingPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFilter, setSelectedFilter] = useState<string>('전체');
+  const [searchQuery, setSearchQuery] = useState('');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
   async function fetchNews(isManualRefresh = false) {
@@ -118,6 +119,24 @@ export default function BreakingPage() {
     return article.source === selectedFilter;
   }
 
+  function isArticleMatchedWithSearch(article: Article): boolean {
+    const keyword = searchQuery.trim().toLowerCase();
+
+    if (!keyword) {
+      return true;
+    }
+
+    return [article.title, article.description, article.source, getArticleCategory(article)]
+      .join(' ')
+      .toLowerCase()
+      .includes(keyword);
+  }
+
+  function resetSearchOptions() {
+    setSelectedFilter('전체');
+    setSearchQuery('');
+  }
+
   const filters = useMemo(() => {
     const uniqueSources = Array.from(
       new Set(articles.map((article) => getFilterSourceName(article.source)))
@@ -127,8 +146,12 @@ export default function BreakingPage() {
   }, [articles]);
 
   const filteredArticles = useMemo(() => {
-    return articles.filter((article) => isArticleMatchedWithSelectedFilter(article));
-  }, [articles, selectedFilter]);
+    return articles.filter(
+      (article) =>
+        isArticleMatchedWithSelectedFilter(article) &&
+        isArticleMatchedWithSearch(article)
+    );
+  }, [articles, selectedFilter, searchQuery]);
 
   function getRelativeTime(dateString: string): string {
     const now = new Date();
@@ -296,6 +319,28 @@ export default function BreakingPage() {
             </div>
           )}
 
+          <div className="mb-3 rounded-2xl border border-gray-100 bg-gray-50 p-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="제목·요약·출처 검색"
+                className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+              <button
+                type="button"
+                onClick={resetSearchOptions}
+                className="rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-700"
+              >
+                초기화
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              조회 결과 {filteredArticles.length}건 / 전체 {articles.length}건
+            </p>
+          </div>
+
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
             {filters.map((filter) => (
               <button
@@ -373,7 +418,7 @@ export default function BreakingPage() {
         })}
 
         {filteredArticles.length === 0 && (
-          <div className="p-8 text-center text-gray-500">표시할 속보가 없습니다.</div>
+          <div className="p-8 text-center text-gray-500">조회 조건에 맞는 속보가 없습니다.</div>
         )}
       </div>
     </div>

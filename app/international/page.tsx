@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 
@@ -22,6 +22,9 @@ export default function InternationalPage() {
   const [error, setError] = useState<string | null>(null);
   const [sourceStats, setSourceStats] = useState<{ [key: string]: number }>({});
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedSource, setSelectedSource] = useState('전체');
+  const [selectedLanguage, setSelectedLanguage] = useState<'전체' | '한글 기사' | '영문 기사'>('전체');
 
   async function fetchNews(isManualRefresh = false) {
     try {
@@ -146,6 +149,36 @@ export default function InternationalPage() {
     });
   };
 
+
+  const isKoreanText = (text: string) => /[가-힣]/.test(text);
+
+  const sourceOptions = useMemo(() => {
+    return ['전체', ...Array.from(new Set(articles.map((article) => article.source))).sort()];
+  }, [articles]);
+
+  const filteredArticles = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+
+    return articles.filter((article) => {
+      const articleText = `${article.title} ${article.description} ${article.source}`.toLowerCase();
+      const matchesKeyword = !keyword || articleText.includes(keyword);
+      const matchesSource = selectedSource === '전체' || article.source === selectedSource;
+      const hasKorean = isKoreanText(`${article.title} ${article.description}`);
+      const matchesLanguage =
+        selectedLanguage === '전체' ||
+        (selectedLanguage === '한글 기사' && hasKorean) ||
+        (selectedLanguage === '영문 기사' && !hasKorean);
+
+      return matchesKeyword && matchesSource && matchesLanguage;
+    });
+  }, [articles, searchTerm, selectedSource, selectedLanguage]);
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setSelectedSource('전체');
+    setSelectedLanguage('전체');
+  };
+
   const Header = () => (
     <header className="bg-white shadow-md sticky top-0 z-50">
       <div className="max-w-6xl mx-auto px-4 py-4">
@@ -233,9 +266,77 @@ export default function InternationalPage() {
       <Header />
 
       <main className="max-w-6xl mx-auto px-4 py-8">
-        {articles.length > 0 ? (
+        <section className="mb-6 rounded-2xl bg-white p-5 shadow-md">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex-1">
+              <label className="mb-2 block text-sm font-semibold text-gray-700">
+                기사 조회
+              </label>
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="제목·요약·출처 검색"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:w-[520px]">
+              <div>
+                <label className="mb-2 block text-xs font-semibold text-gray-500">
+                  출처
+                </label>
+                <select
+                  value={selectedSource}
+                  onChange={(event) => setSelectedSource(event.target.value)}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                >
+                  {sourceOptions.map((source) => (
+                    <option key={source} value={source}>
+                      {source}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-semibold text-gray-500">
+                  언어
+                </label>
+                <select
+                  value={selectedLanguage}
+                  onChange={(event) =>
+                    setSelectedLanguage(event.target.value as '전체' | '한글 기사' | '영문 기사')
+                  }
+                  className="w-full rounded-xl border border-gray-200 px-3 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="전체">전체</option>
+                  <option value="한글 기사">한글 기사</option>
+                  <option value="영문 기사">영문 기사</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800 sm:self-end"
+              >
+                초기화
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+            <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">
+              조회 결과 {filteredArticles.length}건
+            </span>
+            <span>전체 {articles.length}건 중 조건에 맞는 기사입니다.</span>
+          </div>
+        </section>
+
+        {filteredArticles.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {articles.map((article, index) => (
+            {filteredArticles.map((article, index) => (
               <a
                 key={`${article.source}-${article.link}-${index}`}
                 href={article.link}
@@ -280,7 +381,14 @@ export default function InternationalPage() {
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-md p-8 text-center">
-            <p className="text-gray-500">표시할 국제 뉴스가 없습니다.</p>
+            <p className="text-gray-500">조회 조건에 맞는 국제 뉴스가 없습니다.</p>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="mt-4 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              조회 조건 초기화
+            </button>
           </div>
         )}
       </main>

@@ -30,6 +30,8 @@ interface CommunityResponse {
 export default function CommunityPage() {
   const [issues, setIssues] = useState<CommunityIssue[]>([]);
   const [selectedSource, setSelectedSource] = useState<CommunitySourceFilter>('전체');
+  const [selectedCategory, setSelectedCategory] = useState('전체');
+  const [searchQuery, setSearchQuery] = useState('');
   const [expandedIssueId, setExpandedIssueId] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [sourceStats, setSourceStats] = useState<Record<string, number>>({});
@@ -84,14 +86,30 @@ export default function CommunityPage() {
   }, []);
 
   const filteredIssues = useMemo(() => {
-    if (selectedSource === '전체') {
-      return issues;
-    }
+    const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
-    return issues.filter((issue) => issue.source === selectedSource);
-  }, [issues, selectedSource]);
+    return issues.filter((issue) => {
+      const matchesSource =
+        selectedSource === '전체' || issue.source === selectedSource;
+      const matchesCategory =
+        selectedCategory === '전체' || issue.category === selectedCategory;
+      const searchableText = `${issue.title} ${issue.summary} ${issue.detail} ${issue.source} ${issue.category}`.toLowerCase();
+      const matchesSearch =
+        normalizedSearchQuery.length === 0 ||
+        searchableText.includes(normalizedSearchQuery);
+
+      return matchesSource && matchesCategory && matchesSearch;
+    });
+  }, [issues, selectedSource, selectedCategory, searchQuery]);
 
   const sourceButtons: CommunitySourceFilter[] = ['전체', '클리앙', '뽐뿌'];
+
+  const categoryButtons = useMemo(() => {
+    return [
+      '전체',
+      ...Array.from(new Set(issues.map((issue) => issue.category))).filter(Boolean),
+    ];
+  }, [issues]);
 
   function getFormattedTime(dateString: string): string {
     const date = new Date(dateString);
@@ -134,6 +152,13 @@ export default function CommunityPage() {
 
   function toggleIssueDetail(issueId: string) {
     setExpandedIssueId((currentId) => (currentId === issueId ? null : issueId));
+  }
+
+  function resetSearchConditions() {
+    setSearchQuery('');
+    setSelectedSource('전체');
+    setSelectedCategory('전체');
+    setExpandedIssueId(null);
   }
 
   function getLastUpdatedText(): string {
@@ -229,31 +254,85 @@ export default function CommunityPage() {
             </div>
           )}
 
+          <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 mb-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-bold text-gray-800">커뮤니티 조회</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  제목·요약·세부내용·게시판을 검색하고 출처와 게시판별로 확인합니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={resetSearchConditions}
+                className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                초기화
+              </button>
+            </div>
+
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setExpandedIssueId(null);
+              }}
+              placeholder="제목·요약·세부내용·게시판 검색"
+              className="mt-4 w-full rounded-xl border border-blue-100 bg-white px-4 py-3 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
+
           <div className="flex items-center justify-between gap-4 mb-3 text-sm text-gray-500">
             <span>
-              표시 중 <strong className="text-gray-900">{filteredIssues.length}</strong>개 /
-              전체 <strong className="text-gray-900">{issues.length}</strong>개
+              조회 결과 <strong className="text-gray-900">{filteredIssues.length}</strong>건 /
+              전체 <strong className="text-gray-900">{issues.length}</strong>건
             </span>
             {getLastUpdatedText() && <span>마지막 업데이트 {getLastUpdatedText()}</span>}
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {sourceButtons.map((source) => (
-              <button
-                key={source}
-                onClick={() => {
-                  setSelectedSource(source);
-                  setExpandedIssueId(null);
-                }}
-                className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all text-sm ${
-                  selectedSource === source
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {source} {getFilterCount(source)}
-              </button>
-            ))}
+          <div className="mb-3">
+            <p className="mb-2 text-xs font-semibold text-gray-500">출처 필터</p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {sourceButtons.map((source) => (
+                <button
+                  key={source}
+                  onClick={() => {
+                    setSelectedSource(source);
+                    setExpandedIssueId(null);
+                  }}
+                  className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all text-sm ${
+                    selectedSource === source
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {source} {getFilterCount(source)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-gray-500">게시판 필터</p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {categoryButtons.map((category) => (
+                <button
+                  key={category}
+                  onClick={() => {
+                    setSelectedCategory(category);
+                    setExpandedIssueId(null);
+                  }}
+                  className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all text-sm ${
+                    selectedCategory === category
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {category}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </header>
@@ -319,7 +398,7 @@ export default function CommunityPage() {
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-md p-10 text-center">
-            <p className="text-gray-500">선택한 출처의 커뮤니티 이슈가 없습니다.</p>
+            <p className="text-gray-500">조회 조건에 맞는 커뮤니티 이슈가 없습니다.</p>
           </div>
         )}
       </main>
