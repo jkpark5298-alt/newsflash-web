@@ -28,49 +28,23 @@ type CompactMarketCard = {
   value: string;
   change: string;
   changeTone?: "up" | "down" | "neutral";
-  trend?: number[];
 };
 
-function MiniTrend({
-  tone = "neutral",
-  values = [],
-}: {
-  tone?: "up" | "down" | "neutral";
-  values?: number[];
-}) {
+function MiniTrend({ tone = "neutral" }: { tone?: "up" | "down" | "neutral" }) {
   const strokeColor =
     tone === "down" ? "#2563eb" : tone === "up" ? "#ef4444" : "#94a3b8";
   const fillColor =
     tone === "down" ? "#eff6ff" : tone === "up" ? "#fef2f2" : "#f8fafc";
-
-  const validValues = values.filter((value) => Number.isFinite(value));
-  const minValue = validValues.length > 0 ? Math.min(...validValues) : 0;
-  const maxValue = validValues.length > 0 ? Math.max(...validValues) : 0;
-  const range = maxValue - minValue;
-  const hasRealTrend = validValues.length >= 2 && range > 0;
-
-  const points = hasRealTrend
-    ? validValues
-        .map((value, index) => {
-          const x =
-            validValues.length === 1
-              ? 39
-              : 4 + (index / (validValues.length - 1)) * 70;
-          const y = 26 - ((value - minValue) / range) * 20;
-          return `${x.toFixed(1)},${y.toFixed(1)}`;
-        })
-        .join(" ")
-    : tone === "down"
+  const points =
+    tone === "down"
       ? "4,12 18,10 32,13 46,18 60,22 74,25"
       : tone === "up"
         ? "4,26 18,22 32,20 46,15 60,11 74,6"
         : "4,17 18,17 32,17 46,17 60,17 74,17";
 
-  const lastPoint = points.split(" ").at(-1)?.split(",") ?? ["74", "17"];
-
   return (
-    <div className="flex h-[64px] items-center justify-center rounded-xl border border-slate-100 bg-slate-50 px-2 md:h-[76px]">
-      <svg viewBox="0 0 78 32" className="h-10 w-full md:h-11" aria-label="추이 그래프">
+    <div className="flex h-[76px] items-center justify-center rounded-xl border border-slate-100 bg-slate-50 px-2">
+      <svg viewBox="0 0 78 32" className="h-11 w-full" aria-label="추이 그래프">
         <rect x="0" y="0" width="78" height="32" rx="8" fill={fillColor} />
         <path
           d="M4 26 H74"
@@ -87,7 +61,7 @@ function MiniTrend({
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        <circle cx={lastPoint[0]} cy={lastPoint[1]} r="3" fill={strokeColor} />
+        <circle cx="74" cy={tone === "down" ? "25" : tone === "up" ? "6" : "17"} r="3" fill={strokeColor} />
       </svg>
     </div>
   );
@@ -102,13 +76,6 @@ type MarketItem = {
   changeRate: string;
   status: string;
   description: string;
-  trend?: number[];
-  details?: Array<{
-    label: string;
-    value: string;
-    changeRate: string;
-    trend?: number[];
-  }>;
 };
 
 interface Article {
@@ -148,6 +115,7 @@ type IssueGroup = Article & {
   relatedCount: number;
   relatedSources: string[];
   relatedArticles: Article[];
+  score?: number;
 };
 
 const ECONOMY_INDICATORS: EconomyIndicator[] = [
@@ -316,6 +284,298 @@ const ISSUE_GROUP_RULES = [
     ],
   },
 ];
+
+
+const POLITICAL_DETAIL_RULES = [
+  {
+    label: "외교·정상회담",
+    keywords: ["정상회담", "시진핑", "트럼프", "미중", "미국", "중국", "외교", "관세", "무역", "회담", "협상"],
+  },
+  {
+    label: "정치·선거",
+    keywords: ["대선", "선거", "출마", "후보", "경선", "공천", "표심", "여론조사", "캠프", "선관위"],
+  },
+  {
+    label: "정치·정당",
+    keywords: ["민주당", "국민의힘", "국힘", "정당", "당대표", "비대위", "최고위원", "당원", "원내대표"],
+  },
+  {
+    label: "정치·국회",
+    keywords: ["국회", "국회의장", "의장", "국회의원", "의원", "상임위", "청문회", "법안", "본회의", "표결"],
+  },
+  {
+    label: "대통령·정부",
+    keywords: ["대통령", "대통령실", "정부", "장관", "국무총리", "총리", "국무회의", "행정부", "내각"],
+  },
+  {
+    label: "정치·수사재판",
+    keywords: ["특검", "검찰", "공수처", "수사", "재판", "구속", "기소", "압수수색", "탄핵", "영장"],
+  },
+];
+
+const POLITICAL_DETAIL_WEIGHTS: Record<string, number> = {
+  "외교·정상회담": 10,
+  "정치·선거": 9,
+  "정치·정당": 8,
+  "정치·국회": 8,
+  "대통령·정부": 8,
+  "정치·수사재판": 7,
+};
+
+
+function isPoliticalCategory(category: string) {
+  return (
+    category.startsWith("정치") ||
+    category === "대통령·정부" ||
+    category === "외교·정상회담"
+  );
+}
+
+const ISSUE_STOP_WORDS = new Set([
+  "속보",
+  "단독",
+  "종합",
+  "영상",
+  "사진",
+  "오늘",
+  "내일",
+  "이번",
+  "관련",
+  "기자",
+  "논란",
+  "가능성",
+  "확인",
+  "뉴스",
+  "발표",
+  "정부",
+  "대한",
+  "우리",
+  "한국",
+  "국내",
+  "현장",
+  "최신",
+  "주요",
+  "전체",
+  "첫",
+  "또",
+  "더",
+  "왜",
+  "새",
+]);
+
+const ISSUE_CATEGORY_WEIGHTS: Record<string, number> = {
+  "환율·외환": 9,
+  "금리·물가": 9,
+  "증시·주가": 8,
+  "국제·안보": 8,
+  "외교·정상회담": 9,
+  "정치·국회": 7,
+  "정치·선거": 9,
+  "정치·정당": 8,
+  "대통령·정부": 8,
+  "정치·수사재판": 7,
+  "사회·사건": 7,
+  "지역 이슈": 7,
+  "기후·재난": 7,
+  "교통·파업": 6,
+  "부동산·전세": 6,
+  "의료·교육": 5,
+};
+
+const POLITICAL_GENERIC_TOKENS = new Set([
+  "정치",
+  "국회",
+  "정부",
+  "대통령",
+  "대통령실",
+  "정당",
+  "의원",
+  "후보",
+  "대표",
+  "장관",
+  "관련",
+  "기사",
+  "뉴스",
+  "주요",
+  "국내",
+  "한국",
+]);
+
+const GENERAL_GENERIC_TOKENS = new Set([
+  "관련",
+  "기사",
+  "뉴스",
+  "주요",
+  "오늘",
+  "이번",
+  "한국",
+  "국내",
+  "전체",
+]);
+
+function getSpecificIssueTokens(tokens: string[], category: string) {
+  const blockList = isPoliticalCategory(category)
+    ? POLITICAL_GENERIC_TOKENS
+    : GENERAL_GENERIC_TOKENS;
+
+  return tokens
+    .filter((token) => token.length >= 2 && !blockList.has(token))
+    .slice(0, 6);
+}
+
+function buildIssueKeyword(category: string, tokens: string[]) {
+  const visibleTokens = getSpecificIssueTokens(tokens, category).slice(0, 3);
+
+  if (visibleTokens.length === 0) {
+    return category;
+  }
+
+  return `${category} · ${visibleTokens.join(" · ")}`;
+}
+
+function normalizeIssueText(text: string) {
+  return text
+    .replace(/<[^>]*>/g, " ")
+    .replace(/[\[\]【】()（）{}"'“”‘’·,./:!?\-_=+|\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function extractIssueTokens(article: Article) {
+  const text = normalizeIssueText(`${article.title} ${article.description}`);
+  const tokens = text.match(/[가-힣a-zA-Z0-9%]+/g) || [];
+  const tokenCounts = new Map<string, number>();
+
+  tokens.forEach((token) => {
+    const cleanToken = token.trim();
+
+    if (cleanToken.length < 2 || ISSUE_STOP_WORDS.has(cleanToken)) {
+      return;
+    }
+
+    tokenCounts.set(cleanToken, (tokenCounts.get(cleanToken) || 0) + 1);
+  });
+
+  ISSUE_GROUP_RULES.forEach((rule) => {
+    rule.keywords.forEach((keyword) => {
+      if (text.includes(keyword.toLowerCase())) {
+        tokenCounts.set(keyword, (tokenCounts.get(keyword) || 0) + 3);
+      }
+    });
+  });
+
+  POLITICAL_DETAIL_RULES.forEach((rule) => {
+    rule.keywords.forEach((keyword) => {
+      if (text.includes(keyword.toLowerCase())) {
+        tokenCounts.set(keyword, (tokenCounts.get(keyword) || 0) + 4);
+      }
+    });
+  });
+
+  return Array.from(tokenCounts.entries())
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+    .map(([token]) => token)
+    .slice(0, 8);
+}
+
+function getIssueCategory(article: Article) {
+  const text = `${article.title} ${article.description}`.toLowerCase();
+
+  const politicalDetailMatches = POLITICAL_DETAIL_RULES.map((rule) => ({
+    label: rule.label,
+    count: rule.keywords.filter((keyword) =>
+      text.includes(keyword.toLowerCase()),
+    ).length,
+  }))
+    .filter((match) => match.count > 0)
+    .sort((a, b) => {
+      const weightDiff =
+        (POLITICAL_DETAIL_WEIGHTS[b.label] || 0) -
+        (POLITICAL_DETAIL_WEIGHTS[a.label] || 0);
+
+      if (weightDiff !== 0) {
+        return weightDiff;
+      }
+
+      return b.count - a.count;
+    });
+
+  if (politicalDetailMatches.length > 0) {
+    return politicalDetailMatches[0].label;
+  }
+
+  const matchedRule = ISSUE_GROUP_RULES.find((rule) =>
+    rule.keywords.some((keyword) => text.includes(keyword.toLowerCase())),
+  );
+
+  return matchedRule?.label || "주요 이슈";
+}
+
+function countTokenOverlap(a: string[], b: string[]) {
+  const bSet = new Set(b);
+  return a.filter((token) => bSet.has(token)).length;
+}
+
+function getRecencyScore(article: Article) {
+  const publishedTime = new Date(article.pubDate).getTime();
+
+  if (Number.isNaN(publishedTime)) {
+    return 0;
+  }
+
+  const diffHours = (Date.now() - publishedTime) / 3600000;
+
+  if (diffHours <= 1) {
+    return 8;
+  }
+
+  if (diffHours <= 3) {
+    return 6;
+  }
+
+  if (diffHours <= 6) {
+    return 4;
+  }
+
+  if (diffHours <= 12) {
+    return 2;
+  }
+
+  return 0;
+}
+
+function getIssueScore(
+  relatedArticles: Article[],
+  relatedSources: string[],
+  category: string,
+) {
+  const latestRecencyScore = Math.max(...relatedArticles.map(getRecencyScore), 0);
+  const categoryWeight = ISSUE_CATEGORY_WEIGHTS[category] || 4;
+
+  return (
+    relatedArticles.length * 10 +
+    relatedSources.length * 5 +
+    latestRecencyScore +
+    categoryWeight
+  );
+}
+
+function pickRepresentativeArticle(articles: Article[]) {
+  return [...articles].sort((a, b) => {
+    const aDescriptionScore = a.description ? 2 : 0;
+    const bDescriptionScore = b.description ? 2 : 0;
+    const aTitleScore = Math.min(a.title.length, 80) / 20;
+    const bTitleScore = Math.min(b.title.length, 80) / 20;
+    const aTime = new Date(a.pubDate).getTime() || 0;
+    const bTime = new Date(b.pubDate).getTime() || 0;
+
+    return (
+      bDescriptionScore + bTitleScore + getRecencyScore(b) + bTime / 1000000000000 -
+      (aDescriptionScore + aTitleScore + getRecencyScore(a) + aTime / 1000000000000)
+    );
+  })[0];
+}
 
 const DETAIL_VIEW_OPTIONS: DetailView[] = [
   "속보",
@@ -560,10 +820,9 @@ export default function Home() {
           : (indicator?.change || "") === "-"
             ? "neutral"
             : "up",
-        trend: marketData.find((item) => item.key === key)?.trend ?? [],
       };
     });
-  }, [economyIndicators, marketData]);
+  }, [economyIndicators]);
 
   const usMarketCards = useMemo<CompactMarketCard[]>(() => {
     const marketItem = marketData.find(
@@ -576,27 +835,7 @@ export default function Home() {
         value: "준비 중",
         change: "-",
         changeTone: "neutral",
-        trend: [],
       }));
-    }
-
-    if (Array.isArray(marketItem.details) && marketItem.details.length > 0) {
-      return ["DOW", "NASDAQ", "S&P500"].map((label) => {
-        const detail = marketItem.details?.find((item) => item.label === label);
-        const changeText = detail?.changeRate || "-";
-
-        return {
-          label,
-          value: detail?.value || "준비 중",
-          change: changeText,
-          changeTone: changeText.startsWith("-")
-            ? "down"
-            : changeText === "-"
-              ? "neutral"
-              : "up",
-          trend: detail?.trend ?? [],
-        };
-      });
     }
 
     const valueEntries = [marketItem.value, ...marketItem.change.split(" · ")];
@@ -640,7 +879,6 @@ export default function Home() {
           : changeText === "-"
             ? "neutral"
             : "up",
-        trend: marketItem.trend ?? [],
       };
     });
   }, [marketData]);
@@ -657,34 +895,19 @@ export default function Home() {
         : (indicator?.change || "") === "-"
           ? "neutral"
           : "up",
-      trend: marketData.find((item) => item.key === "usdkrw")?.trend ?? [],
     };
-  }, [economyIndicators, marketData]);
+  }, [economyIndicators]);
 
   const rateCards = useMemo<CompactMarketCard[]>(() => {
     const marketItem = marketData.find(
       (item) => item.key === "rates" && item.status === "ok",
     );
 
-    if (marketItem?.details?.length) {
-      return marketItem.details.map((detail) => ({
-        label: detail.label,
-        value: detail.value,
-        change: detail.changeRate,
-        changeTone: detail.changeRate.startsWith("-")
-          ? "down"
-          : detail.changeRate === "-" || detail.changeRate === "정책금리"
-            ? "neutral"
-            : "up",
-        trend: detail.trend ?? [],
-      }));
-    }
-
     if (!marketItem) {
       return [
-        { label: "미국 기준금리", value: "준비 중", change: "-", changeTone: "neutral", trend: [] },
-        { label: "한국 기준금리", value: "준비 중", change: "-", changeTone: "neutral", trend: [] },
-        { label: "미국 10년물", value: "준비 중", change: "-", changeTone: "neutral", trend: [] },
+        { label: "미국 기준금리", value: "준비 중", change: "-", changeTone: "neutral" },
+        { label: "한국 기준금리", value: "준비 중", change: "-", changeTone: "neutral" },
+        { label: "미국 10년물", value: "준비 중", change: "-", changeTone: "neutral" },
       ];
     }
 
@@ -696,73 +919,122 @@ export default function Home() {
         value: marketItem.value.replace("미국 ", ""),
         change: "정책금리",
         changeTone: "neutral",
-        trend: [],
       },
       {
         label: "한국 기준금리",
         value: (secondaryEntries.find((entry) => entry.startsWith("한국 ")) || "한국 준비 중").replace("한국 ", ""),
         change: "정책금리",
         changeTone: "neutral",
-        trend: [],
       },
       {
         label: "미국 10년물",
         value: (secondaryEntries.find((entry) => entry.startsWith("미국 10년물 ")) || "미국 10년물 준비 중").replace("미국 10년물 ", ""),
         change: marketItem.changeRate || "-",
         changeTone: "up",
-        trend: [],
       },
     ];
   }, [marketData]);
 
   const topIssues = useMemo<IssueGroup[]>(() => {
     const articles = [...breakingNews, ...internationalNews];
-    const groups = new Map<string, Article[]>();
+    const groups: Array<{
+      category: string;
+      tokens: string[];
+      anchorTokens: string[];
+      articles: Article[];
+    }> = [];
 
     articles.forEach((article) => {
-      const text = `${article.title} ${article.description}`;
-      const matchedRule = ISSUE_GROUP_RULES.find((rule) =>
-        rule.keywords.some((keyword) =>
-          text.toLowerCase().includes(keyword.toLowerCase()),
-        ),
-      );
+      const category = getIssueCategory(article);
+      const tokens = extractIssueTokens(article);
+      const specificTokens = getSpecificIssueTokens(tokens, category);
+      const normalizedTitleKey = normalizeIssueText(article.title).replace(/\s/g, "");
 
-      const normalizedTitleKey = article.title
-        .replace(/[\s\[\]\(\)"'“”‘’·,./:!?-]/g, "")
-        .toLowerCase()
-        .slice(0, 28);
+      const existingGroup = groups.find((group) => {
+        const sameCategory = group.category === category;
+        const groupSpecificTokens = group.anchorTokens.length > 0
+          ? group.anchorTokens
+          : getSpecificIssueTokens(group.tokens, group.category);
+        const overlapCount = countTokenOverlap(
+          specificTokens.slice(0, 6),
+          groupSpecificTokens.slice(0, 6),
+        );
+        const hasSameLeadToken =
+          specificTokens.length > 0 &&
+          groupSpecificTokens.length > 0 &&
+          specificTokens[0] === groupSpecificTokens[0];
+        const similarTitle = group.articles.some((item) => {
+          const itemTitleKey = normalizeIssueText(item.title).replace(/\s/g, "");
+          return (
+            normalizedTitleKey.length > 14 &&
+            itemTitleKey.length > 14 &&
+            (normalizedTitleKey.includes(itemTitleKey.slice(0, 16)) ||
+              itemTitleKey.includes(normalizedTitleKey.slice(0, 16)))
+          );
+        });
 
-      const groupKey = matchedRule
-        ? matchedRule.label
-        : `주요 이슈-${normalizedTitleKey}`;
-      const currentGroup = groups.get(groupKey) || [];
+        if (!sameCategory) {
+          return similarTitle && overlapCount >= 2;
+        }
 
-      if (
-        !currentGroup.some(
-          (item) => item.link === article.link || item.title === article.title,
-        )
-      ) {
-        currentGroup.push(article);
+        if (isPoliticalCategory(category)) {
+          return similarTitle || overlapCount >= 2 || (hasSameLeadToken && overlapCount >= 1 && group.articles.length < 8);
+        }
+
+        return similarTitle || overlapCount >= 2 || (hasSameLeadToken && overlapCount >= 1);
+      });
+
+      if (existingGroup) {
+        if (
+          !existingGroup.articles.some(
+            (item) => item.link === article.link || item.title === article.title,
+          )
+        ) {
+          existingGroup.articles.push(article);
+          existingGroup.tokens = Array.from(
+            new Set([...existingGroup.tokens, ...tokens]),
+          ).slice(0, 12);
+        }
+
+        return;
       }
 
-      groups.set(groupKey, currentGroup);
+      groups.push({
+        category,
+        tokens,
+        anchorTokens: specificTokens.slice(0, 6),
+        articles: [article],
+      });
     });
 
-    return Array.from(groups.entries())
-      .map(([issueKeyword, relatedArticles]) => {
-        const representativeArticle = relatedArticles[0];
+    return groups
+      .map((group) => {
+        const relatedArticles = group.articles;
+        const representativeArticle = pickRepresentativeArticle(relatedArticles);
+        const relatedSources = Array.from(
+          new Set(relatedArticles.map((article) => article.source)),
+        ).slice(0, 5);
+        const issueKeyword = buildIssueKeyword(group.category, group.tokens);
+        const score = getIssueScore(relatedArticles, relatedSources, group.category);
 
         return {
           ...representativeArticle,
           issueKeyword,
           relatedCount: relatedArticles.length,
-          relatedSources: Array.from(
-            new Set(relatedArticles.map((article) => article.source)),
-          ).slice(0, 4),
+          relatedSources,
           relatedArticles: relatedArticles.slice(0, 4),
+          score,
         };
       })
-      .sort((a, b) => b.relatedCount - a.relatedCount)
+      .sort((a, b) => {
+        const scoreDiff = (b.score || 0) - (a.score || 0);
+
+        if (scoreDiff !== 0) {
+          return scoreDiff;
+        }
+
+        return new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime();
+      })
       .slice(0, 10);
   }, [breakingNews, internationalNews]);
 
@@ -1783,7 +2055,7 @@ export default function Home() {
                         {item.change}
                       </p>
                     </div>
-                    <MiniTrend tone={item.changeTone} values={item.trend} />
+                    <MiniTrend tone={item.changeTone} />
                   </article>
                 ))}
               </div>
@@ -1810,7 +2082,7 @@ export default function Home() {
                         {item.change}
                       </p>
                     </div>
-                    <MiniTrend tone={item.changeTone} values={item.trend} />
+                    <MiniTrend tone={item.changeTone} />
                   </article>
                 ))}
               </div>
@@ -1833,7 +2105,7 @@ export default function Home() {
                       {fxRateCard.change}
                     </p>
                   </div>
-                  <MiniTrend tone={fxRateCard.changeTone} values={fxRateCard.trend} />
+                  <MiniTrend tone={fxRateCard.changeTone} />
                 </article>
 
                 {rateCards.map((item) => (
@@ -1846,7 +2118,7 @@ export default function Home() {
                       <p className="mt-1 text-2xl font-extrabold tracking-tight text-gray-900">{item.value}</p>
                       <p className="mt-1 text-sm text-gray-500">{item.change}</p>
                     </div>
-                    <MiniTrend tone={item.changeTone} values={item.trend} />
+                    <MiniTrend tone={item.changeTone} />
                   </article>
                 ))}
               </div>
