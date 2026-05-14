@@ -890,6 +890,24 @@ export default function Home() {
     });
   };
 
+  const getOptionalDate = (dateString?: string) => {
+    if (!dateString) {
+      return null;
+    }
+
+    const date = new Date(dateString);
+
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    return date.toLocaleDateString("ko-KR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  };
+
   const isKoreanText = (text: string) => {
     return /[가-힣]/.test(text);
   };
@@ -1947,9 +1965,11 @@ export default function Home() {
                       >
                         {getSourceEmoji(cartoon.source)} {cartoon.source}
                       </span>
-                      <span className="text-gray-400 text-xs">
-                        {new Date(cartoon.pubDate).toLocaleDateString("ko-KR")}
-                      </span>
+                      {getOptionalDate(cartoon.pubDate) && (
+                        <span className="text-gray-400 text-xs">
+                          발행일: {getOptionalDate(cartoon.pubDate)}
+                        </span>
+                      )}
                     </div>
                     <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 line-clamp-2">
                       {cartoon.title}

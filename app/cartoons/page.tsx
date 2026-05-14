@@ -53,6 +53,25 @@ export default function CartoonsPage() {
     }
   };
 
+
+  const getOptionalDate = (dateString?: string) => {
+    if (!dateString) {
+      return null;
+    }
+
+    const date = new Date(dateString);
+
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    return date.toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+  };
+
   useEffect(() => {
     fetchCartoons();
     
@@ -140,7 +159,9 @@ export default function CartoonsPage() {
                 </h3>
                 <div className="flex items-center justify-between text-sm text-gray-500">
                   <span>{cartoon.source}</span>
-                  <span>{new Date(cartoon.pubDate).toLocaleDateString('ko-KR')}</span>
+                  {getOptionalDate(cartoon.pubDate) && (
+                    <span>발행일: {getOptionalDate(cartoon.pubDate)}</span>
+                  )}
                 </div>
               </div>
             </a>
