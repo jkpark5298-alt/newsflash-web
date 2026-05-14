@@ -319,43 +319,57 @@ export default function BreakingPage() {
             </div>
           )}
 
-          <div className="mb-3 rounded-2xl border border-gray-100 bg-gray-50 p-3">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center">
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="제목·요약·출처 검색"
-                className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              />
+          <section className="mb-4 rounded-2xl border border-blue-100 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-bold text-gray-900">기사 조회</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  제목·요약·출처를 검색하고 국내·국제·출처별로 확인합니다.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={resetSearchOptions}
-                className="rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-700"
+                className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-700"
               >
                 초기화
               </button>
             </div>
-            <p className="mt-2 text-xs text-gray-500">
-              조회 결과 {filteredArticles.length}건 / 전체 {articles.length}건
-            </p>
-          </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-            {filters.map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setSelectedFilter(filter)}
-                className={`px-6 py-2 rounded-full font-medium whitespace-nowrap transition-all ${
-                  selectedFilter === filter
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {filter}
-              </button>
-            ))}
-          </div>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="제목·요약·출처 검색"
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            />
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+              <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">
+                조회 결과 {filteredArticles.length}건
+              </span>
+              <span>전체 {articles.length}건 중 조건에 맞는 기사입니다.</span>
+            </div>
+
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-semibold text-gray-500">분류·출처 필터</p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {filters.map((filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setSelectedFilter(filter)}
+                    className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all text-sm ${
+                      selectedFilter === filter
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {filter}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
         </div>
       </div>
 

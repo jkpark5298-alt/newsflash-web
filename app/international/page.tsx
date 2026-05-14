@@ -266,71 +266,72 @@ export default function InternationalPage() {
       <Header />
 
       <main className="max-w-6xl mx-auto px-4 py-8">
-        <section className="mb-6 rounded-2xl bg-white p-5 shadow-md">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="flex-1">
-              <label className="mb-2 block text-sm font-semibold text-gray-700">
-                기사 조회
-              </label>
-              <input
-                type="search"
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="제목·요약·출처 검색"
-                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              />
+        <section className="mb-6 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-bold text-gray-900">기사 조회</p>
+              <p className="mt-1 text-xs text-gray-500">
+                제목·요약·출처를 검색하고 출처와 언어별로 확인합니다.
+              </p>
             </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:w-[520px]">
-              <div>
-                <label className="mb-2 block text-xs font-semibold text-gray-500">
-                  출처
-                </label>
-                <select
-                  value={selectedSource}
-                  onChange={(event) => setSelectedSource(event.target.value)}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                >
-                  {sourceOptions.map((source) => (
-                    <option key={source} value={source}>
-                      {source}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold text-gray-500">
-                  언어
-                </label>
-                <select
-                  value={selectedLanguage}
-                  onChange={(event) =>
-                    setSelectedLanguage(event.target.value as '전체' | '한글 기사' | '영문 기사')
-                  }
-                  className="w-full rounded-xl border border-gray-200 px-3 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                >
-                  <option value="전체">전체</option>
-                  <option value="한글 기사">한글 기사</option>
-                  <option value="영문 기사">영문 기사</option>
-                </select>
-              </div>
-
-              <button
-                type="button"
-                onClick={resetFilters}
-                className="rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800 sm:self-end"
-              >
-                초기화
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-800"
+            >
+              초기화
+            </button>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="제목·요약·출처 검색"
+            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+          />
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-500">
             <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">
               조회 결과 {filteredArticles.length}건
             </span>
             <span>전체 {articles.length}건 중 조건에 맞는 기사입니다.</span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-gray-500">
+                출처 필터
+              </label>
+              <select
+                value={selectedSource}
+                onChange={(event) => setSelectedSource(event.target.value)}
+                className="w-full rounded-xl border border-gray-200 px-3 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              >
+                {sourceOptions.map((source) => (
+                  <option key={source} value={source}>
+                    {source}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-gray-500">
+                언어 필터
+              </label>
+              <select
+                value={selectedLanguage}
+                onChange={(event) =>
+                  setSelectedLanguage(event.target.value as '전체' | '한글 기사' | '영문 기사')
+                }
+                className="w-full rounded-xl border border-gray-200 px-3 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="전체">전체</option>
+                <option value="한글 기사">한글 기사</option>
+                <option value="영문 기사">영문 기사</option>
+              </select>
+            </div>
           </div>
         </section>
 
