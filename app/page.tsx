@@ -43,8 +43,8 @@ function MiniTrend({ tone = "neutral" }: { tone?: "up" | "down" | "neutral" }) {
         : "4,17 18,17 32,17 46,17 60,17 74,17";
 
   return (
-    <div className="flex h-[76px] items-center justify-center rounded-xl border border-slate-100 bg-slate-50 px-2">
-      <svg viewBox="0 0 78 32" className="h-11 w-full" aria-label="추이 그래프">
+    <div className="flex h-[58px] items-center justify-center rounded-xl border border-slate-100 bg-slate-50 px-2 md:h-[76px]">
+      <svg viewBox="0 0 78 32" className="h-9 w-full md:h-11" aria-label="추이 그래프">
         <rect x="0" y="0" width="78" height="32" rx="8" fill={fillColor} />
         <path
           d="M4 26 H74"
@@ -1191,14 +1191,14 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
       <header className="bg-white shadow-md sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 py-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-3 md:py-4">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">📰</span>
-                <h1 className="text-3xl font-bold text-gray-800">NewsFlash</h1>
+              <div className="flex items-center gap-2 md:gap-3">
+                <span className="text-2xl md:text-3xl">📰</span>
+                <h1 className="text-2xl font-bold text-gray-800 md:text-3xl">NewsFlash</h1>
               </div>
-              <p className="text-gray-600 mt-2">
+              <p className="mt-1 text-sm text-gray-600 md:mt-2 md:text-base">
                 뉴스·경제·커뮤니티·지역 이슈 확인
               </p>
             </div>
@@ -1208,7 +1208,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="mt-2 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                className="mt-1.5 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 md:mt-2"
               >
                 새로고침
               </button>
@@ -1217,10 +1217,10 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
-        <section className="mb-8">
-          <div className="bg-white rounded-2xl shadow-md p-4">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+      <main className="max-w-6xl mx-auto px-4 py-5 md:py-6">
+        <section className="mb-6 md:mb-8">
+          <div className="rounded-2xl bg-white p-3 shadow-md md:p-4">
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-6 md:gap-3">
               {[
                 { label: "경제 현황판", targetId: "economy-dashboard" },
                 { label: "TOP 3", targetId: "top-issues" },
@@ -1237,7 +1237,7 @@ export default function Home() {
                       .getElementById(item.targetId)
                       ?.scrollIntoView({ behavior: "smooth", block: "start" })
                   }
-                  className="flex items-center justify-center rounded-xl bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-800 transition hover:bg-blue-50 hover:text-blue-700"
+                  className="flex items-center justify-center rounded-xl bg-gray-50 px-3 py-2.5 text-center text-sm font-bold text-gray-800 transition hover:bg-blue-50 hover:text-blue-700 md:py-3"
                 >
                   {item.label}
                 </button>
@@ -1246,13 +1246,13 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="mb-8">
-          <div className="bg-white rounded-2xl shadow-md p-5">
+        <section className="mb-6 md:mb-8">
+          <div className="rounded-2xl bg-white p-4 shadow-md md:p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <div className="flex items-center gap-3">
-                  <span className="text-3xl">🗂️</span>
-                  <h2 className="text-3xl font-bold text-gray-800">전체보기</h2>
+                <div className="flex items-center gap-2 md:gap-3">
+                  <span className="text-2xl md:text-3xl">🗂️</span>
+                  <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">전체보기</h2>
                 </div>
                 <p className="text-sm text-gray-500 mt-2">
                   속보·핵심 이슈·국제 뉴스·지역 이슈·보관함을 선택해서
@@ -1285,9 +1285,9 @@ export default function Home() {
             {selectedDetailView === "속보" && (
               <div>
                 <div className="flex items-center gap-3 mb-5">
-                  <span className="text-3xl">🚨</span>
+                  <span className="text-2xl md:text-3xl">🚨</span>
                   <div>
-                    <h2 className="text-3xl font-bold text-gray-800">
+                    <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                       속보 전체보기
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
@@ -1302,10 +1302,10 @@ export default function Home() {
             {selectedDetailView === "핵심 이슈" && (
               <div>
                 <div className="flex items-center justify-between mb-5">
-                  <div className="flex items-center gap-3">
-                    <span className="text-3xl">⭐</span>
+                  <div className="flex items-center gap-2 md:gap-3">
+                    <span className="text-2xl md:text-3xl">⭐</span>
                     <div>
-                      <h2 className="text-3xl font-bold text-gray-800">
+                      <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                         오늘의 핵심 이슈 TOP 10
                       </h2>
                       <p className="text-sm text-gray-500 mt-1">
@@ -1353,10 +1353,10 @@ export default function Home() {
             {selectedDetailView === "국제 뉴스" && (
               <div>
                 <div className="flex items-center justify-between mb-5">
-                  <div className="flex items-center gap-3">
-                    <span className="text-3xl">🌍</span>
+                  <div className="flex items-center gap-2 md:gap-3">
+                    <span className="text-2xl md:text-3xl">🌍</span>
                     <div>
-                      <h2 className="text-3xl font-bold text-gray-800">
+                      <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                         국제 뉴스
                       </h2>
                       <p className="text-sm text-gray-500 mt-1">
@@ -1431,9 +1431,9 @@ export default function Home() {
               <div>
                 <div className="flex flex-col gap-4 mb-5 md:flex-row md:items-end md:justify-between">
                   <div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-3xl">📍</span>
-                      <h2 className="text-3xl font-bold text-gray-800">
+                    <div className="flex items-center gap-2 md:gap-3">
+                      <span className="text-2xl md:text-3xl">📍</span>
+                      <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                         지역 이슈
                       </h2>
                     </div>
@@ -1589,9 +1589,9 @@ export default function Home() {
             {selectedDetailView === "보관함" && (
               <div>
                 <div className="flex items-center gap-3 mb-5">
-                  <span className="text-3xl">📌</span>
+                  <span className="text-2xl md:text-3xl">📌</span>
                   <div>
-                    <h2 className="text-3xl font-bold text-gray-800">
+                    <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                       주요 기사 보관함
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
@@ -1670,9 +1670,9 @@ export default function Home() {
         <section id="economy-dashboard" className="mb-12 scroll-mt-32">
           <div className="flex items-start justify-between gap-4 mb-5">
             <div>
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">📊</span>
-                <h2 className="text-3xl font-bold text-gray-800">
+              <div className="flex items-center gap-2 md:gap-3">
+                <span className="text-2xl md:text-3xl">📊</span>
+                <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                   경제 현황판
                 </h2>
               </div>
@@ -1689,17 +1689,17 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <div className="rounded-3xl border border-slate-200/70 bg-white/60 p-5 shadow-sm">
+            <div className="rounded-3xl border border-slate-200/70 bg-white/60 p-4 shadow-sm md:p-5">
               <h3 className="mb-4 flex items-center gap-2 text-lg font-extrabold text-gray-800">🇰🇷 한국 증시</h3>
               <div className="space-y-3">
                 {koreanMarketCards.map((item) => (
                   <article
                     key={item.label}
-                    className="grid grid-cols-[1fr_96px] gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-md"
+                    className="grid grid-cols-[1fr_84px] gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-md md:grid-cols-[1fr_96px] md:gap-4 md:p-4"
                   >
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{item.label}</p>
-                      <p className="mt-1 text-2xl font-extrabold tracking-tight text-gray-900">{item.value}</p>
+                      <p className="mt-1 text-xl font-extrabold tracking-tight text-gray-900 md:text-2xl">{item.value}</p>
                       <p className={`mt-1 text-sm ${
                         item.changeTone === "down"
                           ? "text-blue-500"
@@ -1716,17 +1716,17 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200/70 bg-white/60 p-5 shadow-sm">
+            <div className="rounded-3xl border border-slate-200/70 bg-white/60 p-4 shadow-sm md:p-5">
               <h3 className="mb-4 flex items-center gap-2 text-lg font-extrabold text-gray-800">🇺🇸 미국 증시</h3>
               <div className="space-y-3">
                 {usMarketCards.map((item) => (
                   <article
                     key={item.label}
-                    className="grid grid-cols-[1fr_96px] gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-md"
+                    className="grid grid-cols-[1fr_84px] gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-md md:grid-cols-[1fr_96px] md:gap-4 md:p-4"
                   >
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{item.label}</p>
-                      <p className="mt-1 text-2xl font-extrabold tracking-tight text-gray-900">{item.value}</p>
+                      <p className="mt-1 text-xl font-extrabold tracking-tight text-gray-900 md:text-2xl">{item.value}</p>
                       <p className={`mt-1 text-sm ${
                         item.changeTone === "down"
                           ? "text-blue-500"
@@ -1743,13 +1743,13 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200/70 bg-white/60 p-5 shadow-sm">
+            <div className="rounded-3xl border border-slate-200/70 bg-white/60 p-4 shadow-sm md:p-5">
               <h3 className="mb-4 flex items-center gap-2 text-lg font-extrabold text-gray-800">💱 환율 / 금리</h3>
               <div className="space-y-3">
-                <article className="grid grid-cols-[1fr_96px] gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-md">
+                <article className="grid grid-cols-[1fr_84px] gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-md md:grid-cols-[1fr_96px] md:gap-4 md:p-4">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{fxRateCard.label}</p>
-                    <p className="mt-1 text-2xl font-extrabold tracking-tight text-gray-900">{fxRateCard.value}</p>
+                    <p className="mt-1 text-xl font-extrabold tracking-tight text-gray-900 md:text-2xl">{fxRateCard.value}</p>
                     <p className={`mt-1 text-sm ${
                       fxRateCard.changeTone === "down"
                         ? "text-blue-500"
@@ -1766,11 +1766,11 @@ export default function Home() {
                 {rateCards.map((item) => (
                   <article
                     key={item.label}
-                    className="grid grid-cols-[1fr_96px] gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-md"
+                    className="grid grid-cols-[1fr_84px] gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-md md:grid-cols-[1fr_96px] md:gap-4 md:p-4"
                   >
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{item.label}</p>
-                      <p className="mt-1 text-2xl font-extrabold tracking-tight text-gray-900">{item.value}</p>
+                      <p className="mt-1 text-xl font-extrabold tracking-tight text-gray-900 md:text-2xl">{item.value}</p>
                       <p className="mt-1 text-sm text-gray-500">{item.change}</p>
                     </div>
                     <MiniTrend tone={item.changeTone} />
@@ -1783,10 +1783,10 @@ export default function Home() {
 
         <section id="top-issues" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">⭐</span>
+            <div className="flex items-center gap-2 md:gap-3">
+              <span className="text-2xl md:text-3xl">⭐</span>
               <div>
-                <h2 className="text-3xl font-bold text-gray-800">
+                <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                   오늘의 핵심 이슈 TOP 3
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
@@ -1830,10 +1830,10 @@ export default function Home() {
 
         <section id="breaking-news" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">🚨</span>
+            <div className="flex items-center gap-2 md:gap-3">
+              <span className="text-2xl md:text-3xl">🚨</span>
               <div>
-                <h2 className="text-3xl font-bold text-gray-800">주요 속보</h2>
+                <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">주요 속보</h2>
                 <p className="text-sm text-gray-500 mt-1">
                   5분마다 자동 갱신됩니다.
                 </p>
@@ -1852,10 +1852,10 @@ export default function Home() {
 
         <section id="economy-news" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">💰</span>
+            <div className="flex items-center gap-2 md:gap-3">
+              <span className="text-2xl md:text-3xl">💰</span>
               <div>
-                <h2 className="text-3xl font-bold text-gray-800">경제 뉴스</h2>
+                <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">경제 뉴스</h2>
                 <p className="text-sm text-gray-500 mt-1">
                   국내 경제·미국 증시·금리 관련 뉴스를 우선 표시합니다.
                 </p>
@@ -1874,8 +1874,8 @@ export default function Home() {
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
               <div className="flex items-center gap-3 mb-2">
-                <span className="text-3xl">💬</span>
-                <h2 className="text-3xl font-bold text-gray-800">
+                <span className="text-2xl md:text-3xl">💬</span>
+                <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                   커뮤니티 반응
                 </h2>
               </div>
@@ -1919,10 +1919,10 @@ export default function Home() {
 
         <section id="cartoon-section" className="mb-12 scroll-mt-32">
           <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">🎨</span>
+            <div className="flex items-center gap-2 md:gap-3">
+              <span className="text-2xl md:text-3xl">🎨</span>
               <div>
-                <h2 className="text-3xl font-bold text-gray-800">
+                <h2 className="text-2xl font-bold text-gray-800 md:text-3xl">
                   오늘의 시사만평
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
@@ -1988,7 +1988,7 @@ export default function Home() {
         <button
           type="button"
           onClick={scrollToTop}
-          className="fixed bottom-6 right-6 z-50 rounded-full bg-gray-900 px-4 py-3 text-sm font-bold text-white shadow-lg hover:bg-blue-700"
+          className="fixed bottom-8 right-4 z-50 rounded-full bg-gray-900 px-3.5 py-2.5 text-xs font-bold text-white shadow-lg hover:bg-blue-700 md:bottom-6 md:right-6 md:px-4 md:py-3 md:text-sm"
           title="화면 맨 위로 이동"
         >
           맨 위로 ↑
