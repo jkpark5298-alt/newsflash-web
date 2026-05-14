@@ -3,6 +3,13 @@ import { NextResponse } from 'next/server';
 type MarketKey = 'kospi' | 'kosdaq' | 'usdkrw' | 'us-market' | 'rates';
 type MarketStatus = 'ok' | 'delay' | 'error';
 
+type MarketDetail = {
+  label: string;
+  value: string;
+  changeRate: string;
+  trend: number[];
+};
+
 type MarketItem = {
   key: MarketKey;
   label: string;
@@ -12,6 +19,8 @@ type MarketItem = {
   changeRate: string;
   status: MarketStatus;
   description: string;
+  trend: number[];
+  details?: MarketDetail[];
 };
 
 type MarketTarget = {
@@ -85,6 +94,17 @@ function getLatestClose(result: YahooChartResult) {
   return validCloses.at(-1);
 }
 
+function getTrendValues(result?: YahooChartResult) {
+  const closeList = result?.indicators?.quote?.[0]?.close ?? [];
+  const validCloses = closeList.filter((value): value is number => typeof value === 'number');
+
+  if (validCloses.length < 2) {
+    return [];
+  }
+
+  return validCloses.slice(-18).map((value) => Number(value.toFixed(4)));
+}
+
 function buildDelayItem(target: MarketTarget): MarketItem {
   return {
     key: target.key,
@@ -95,6 +115,7 @@ function buildDelayItem(target: MarketTarget): MarketItem {
     changeRate: '-',
     status: 'delay',
     description: target.description,
+    trend: [],
   };
 }
 
@@ -119,6 +140,7 @@ function buildMarketItem(target: MarketTarget, result?: YahooChartResult): Marke
     changeRate: `${sign}${formatNumber(changeRate)}%`,
     status: 'ok',
     description: target.description,
+    trend: getTrendValues(result),
   };
 }
 
@@ -180,6 +202,7 @@ async function fetchUsMarketSummary(): Promise<MarketItem> {
         symbol: target.symbol,
         value: formatNumber(current),
         changeRate: `${sign}${formatNumber(changeRate)}%`,
+        trend: getTrendValues(result),
       };
     }),
   );
@@ -198,6 +221,8 @@ async function fetchUsMarketSummary(): Promise<MarketItem> {
       changeRate: '-',
       status: 'delay',
       description: 'DOW · NASDAQ · S&P500',
+      trend: [],
+      details: [],
     };
   }
 
@@ -225,6 +250,13 @@ async function fetchUsMarketSummary(): Promise<MarketItem> {
       .join(' · ') || '-',
     status: 'ok',
     description: 'DOW · NASDAQ · S&P500',
+    trend: dow?.trend ?? [],
+    details: usMarkets.map((item) => ({
+      label: item.label,
+      value: item.value,
+      changeRate: item.changeRate,
+      trend: item.trend,
+    })),
   };
 }
 
@@ -238,6 +270,27 @@ function buildRatesItem(): MarketItem {
     changeRate: '1차 고정값',
     status: 'ok',
     description: '미국 기준금리 · 한국 기준금리 · 미국 10년물',
+    trend: [],
+    details: [
+      {
+        label: '미국 기준금리',
+        value: '3.50~3.75%',
+        changeRate: '정책금리',
+        trend: [],
+      },
+      {
+        label: '한국 기준금리',
+        value: '2.50%',
+        changeRate: '정책금리',
+        trend: [],
+      },
+      {
+        label: '미국 10년물',
+        value: '4.42%',
+        changeRate: '1차 고정값',
+        trend: [],
+      },
+    ],
   };
 }
 
