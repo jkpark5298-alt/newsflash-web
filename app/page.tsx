@@ -1465,6 +1465,41 @@ export default function Home() {
     return `https://www.google.com/search?q=${encodeURIComponent(article.title)}`;
   };
 
+
+  const renderArticleTranslationActions = (article: Article) => {
+    if (!needsTranslation(article)) {
+      return null;
+    }
+
+    const translation = translations[getTranslationKey(article)];
+
+    return (
+      <>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => requestArticleTranslation(article)}
+            disabled={translation?.loading}
+            className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+            title="기사 제목과 요약을 한국어로 확인합니다."
+          >
+            {translation?.loading ? "번역 중..." : "번역하기"}
+          </button>
+          <a
+            href={getArticleSearchUrl(article)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
+            title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
+          >
+            제목 검색
+          </a>
+        </div>
+        {renderTranslationPanel(article)}
+      </>
+    );
+  };
+
   const renderIssueGroupBadge = (issue: IssueGroup) => {
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1528,6 +1563,7 @@ export default function Home() {
                 <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
                   {article.description}
                 </p>
+                {renderArticleTranslationActions(article)}
               </div>
             </div>
           </article>
@@ -1779,6 +1815,7 @@ export default function Home() {
                                 관련 출처: {issue.relatedSources.join(" · ")}
                               </p>
                             )}
+                            {renderArticleTranslationActions(issue)}
                           </div>
                         </div>
                       </article>
@@ -1836,31 +1873,7 @@ export default function Home() {
                         <p className="text-sm text-gray-600 line-clamp-3">
                           {article.description}
                         </p>
-                        <div className="flex flex-wrap items-center gap-2 mt-4">
-                          {needsTranslation(article) && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => requestArticleTranslation(article)}
-                                disabled={translations[getTranslationKey(article)]?.loading}
-                                className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
-                                title="기사 제목과 요약을 한국어로 확인합니다."
-                              >
-                                {translations[getTranslationKey(article)]?.loading ? "번역 중..." : "번역하기"}
-                              </button>
-                              <a
-                                href={getArticleSearchUrl(article)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
-                                title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
-                              >
-                                제목 검색
-                              </a>
-                            </>
-                          )}
-                        </div>
-                        {renderTranslationPanel(article)}
+                        {renderArticleTranslationActions(article)}
                       </article>
                     ))}
                   </div>
@@ -2263,6 +2276,7 @@ export default function Home() {
                           관련 출처: {issue.relatedSources.join(" · ")}
                         </p>
                       )}
+                      {renderArticleTranslationActions(issue)}
                     </div>
                   </div>
                 </article>

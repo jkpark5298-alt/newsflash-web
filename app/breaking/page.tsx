@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
 const BREAKING_REFRESH_MS = 5 * 60 * 1000;
@@ -27,6 +27,18 @@ interface BreakingResponse {
   error?: string;
 }
 
+type TranslationResult = {
+  titleKo: string;
+  summaryKo: string;
+  notice?: string;
+};
+
+type TranslationState = {
+  loading?: boolean;
+  error?: string;
+  result?: TranslationResult;
+};
+
 export default function BreakingPage() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +47,7 @@ export default function BreakingPage() {
   const [selectedFilter, setSelectedFilter] = useState<string>('전체');
   const [searchQuery, setSearchQuery] = useState('');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
 
   async function fetchNews(isManualRefresh = false) {
     try {
@@ -47,11 +60,11 @@ export default function BreakingPage() {
       setError(null);
 
       const response = await fetch('/api/breaking', {
-        cache: 'no-store'
+        cache: 'no-store',
       });
 
       if (!response.ok) {
-        throw new Error('속보를 불러오는데 실패했습니다.');
+        throw new Error('속보를 불러오지 못했습니다.');
       }
 
       const data: BreakingResponse = await response.json();
@@ -72,10 +85,10 @@ export default function BreakingPage() {
   }
 
   useEffect(() => {
-    fetchNews();
+    void fetchNews();
 
     const interval = setInterval(() => {
-      fetchNews();
+      void fetchNews();
     }, BREAKING_REFRESH_MS);
 
     return () => clearInterval(interval);
@@ -86,7 +99,12 @@ export default function BreakingPage() {
       return article.category;
     }
 
-    const internationalSources = ['BBC News', 'New York Times', 'Al Jazeera', 'The Guardian'];
+    const internationalSources = [
+      'BBC News',
+      'New York Times',
+      'Al Jazeera',
+      'The Guardian',
+    ];
 
     if (internationalSources.includes(article.source)) {
       return '국제';
@@ -139,7 +157,7 @@ export default function BreakingPage() {
 
   const filters = useMemo(() => {
     const uniqueSources = Array.from(
-      new Set(articles.map((article) => getFilterSourceName(article.source)))
+      new Set(articles.map((article) => getFilterSourceName(article.source))),
     );
 
     return ['전체', '국내', '국제', ...uniqueSources];
@@ -149,7 +167,7 @@ export default function BreakingPage() {
     return articles.filter(
       (article) =>
         isArticleMatchedWithSelectedFilter(article) &&
-        isArticleMatchedWithSearch(article)
+        isArticleMatchedWithSearch(article),
     );
   }, [articles, selectedFilter, searchQuery]);
 
@@ -193,7 +211,7 @@ export default function BreakingPage() {
 
     return date.toLocaleTimeString('ko-KR', {
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   }
 
@@ -209,6 +227,12 @@ export default function BreakingPage() {
         return 'text-green-600';
       case 'YTN 최신뉴스':
         return 'text-indigo-600';
+      case '매일경제':
+        return 'text-gray-700';
+      case '경향신문':
+        return 'text-purple-600';
+      case '뉴스':
+        return 'text-gray-700';
       case 'BBC News':
         return 'text-red-600';
       case 'New York Times':
@@ -233,15 +257,16 @@ export default function BreakingPage() {
       case '연합뉴스TV':
         return '📰';
       case 'YTN 최신뉴스':
-        return '🚨';
+        return '📡';
+      case '매일경제':
+      case '경향신문':
+      case '뉴스':
+        return '📄';
       case 'BBC News':
-        return '🇬🇧';
       case 'New York Times':
-        return '🇺🇸';
       case 'Al Jazeera':
-        return '🌍';
       case 'The Guardian':
-        return '🇬🇧';
+        return '🌍';
       default:
         return '📄';
     }
@@ -255,11 +280,160 @@ export default function BreakingPage() {
     return 'bg-emerald-50 text-emerald-700';
   }
 
+  function isKoreanText(text: string) {
+    return /[가-힣]/.test(text);
+  }
+
+  function needsTranslation(article: Article) {
+    const text = `${article.title} ${article.description}`;
+    return !isKoreanText(text);
+  }
+
+  function getTranslationKey(article: Article) {
+    return article.link || article.title;
+  }
+
+  function getArticleSearchUrl(article: Article) {
+    return `https://www.google.com/search?q=${encodeURIComponent(article.title)}`;
+  }
+
+  async function requestArticleTranslation(article: Article) {
+    const key = getTranslationKey(article);
+
+    setTranslations((current) => ({
+      ...current,
+      [key]: { loading: true },
+    }));
+
+    try {
+      const response = await fetch('/api/translate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: article.title,
+          description: article.description,
+          source: article.source,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('번역 요청에 실패했습니다.');
+      }
+
+      const data = await response.json();
+
+      setTranslations((current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          result: {
+            titleKo: data.titleKo || '번역 제목을 불러오지 못했습니다.',
+            summaryKo: data.summaryKo || '번역 요약을 불러오지 못했습니다.',
+            notice: data.notice,
+          },
+        },
+      }));
+    } catch (err) {
+      setTranslations((current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          error: err instanceof Error ? err.message : '번역을 불러오지 못했습니다.',
+        },
+      }));
+    }
+  }
+
+  function renderTranslationPanel(article: Article) {
+    const translation = translations[getTranslationKey(article)];
+
+    if (!translation) {
+      return null;
+    }
+
+    if (translation.loading) {
+      return (
+        <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-700">
+          번역을 불러오는 중입니다...
+        </div>
+      );
+    }
+
+    if (translation.error) {
+      return (
+        <div className="mt-3 rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-600">
+          {translation.error}
+        </div>
+      );
+    }
+
+    if (!translation.result) {
+      return null;
+    }
+
+    return (
+      <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3">
+        <p className="mb-1 text-xs font-bold text-blue-700">번역 결과</p>
+        <p className="text-sm font-semibold text-gray-900">
+          {translation.result.titleKo}
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-gray-700">
+          {translation.result.summaryKo}
+        </p>
+        {translation.result.notice && (
+          <p className="mt-2 text-xs text-gray-500">{translation.result.notice}</p>
+        )}
+      </div>
+    );
+  }
+
+  function renderArticleActions(article: Article) {
+    const translation = translations[getTranslationKey(article)];
+
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <a
+          href={article.link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
+          title="원문 기사로 이동합니다."
+        >
+          원문보기
+        </a>
+
+        {needsTranslation(article) && (
+          <button
+            type="button"
+            onClick={() => requestArticleTranslation(article)}
+            disabled={translation?.loading}
+            className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+            title="기사 제목과 요약을 한국어로 확인합니다."
+          >
+            {translation?.loading ? '번역 중...' : '번역하기'}
+          </button>
+        )}
+
+        <a
+          href={getArticleSearchUrl(article)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
+          title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
+        >
+          제목 검색
+        </a>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="mx-auto mb-4 h-16 w-16 animate-spin rounded-full border-b-2 border-blue-600"></div>
           <p className="text-gray-600">속보를 불러오는 중...</p>
         </div>
       </div>
@@ -268,12 +442,13 @@ export default function BreakingPage() {
 
   if (error && articles.length === 0) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <div className="text-center">
-          <p className="text-red-600 text-xl mb-4">⚠️ {error}</p>
+          <p className="mb-4 text-xl text-red-600">⚠️ {error}</p>
           <button
+            type="button"
             onClick={() => fetchNews(true)}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="rounded-lg bg-blue-600 px-6 py-2 text-white hover:bg-blue-700"
           >
             즉시 갱신
           </button>
@@ -284,12 +459,12 @@ export default function BreakingPage() {
 
   return (
     <div className="min-h-screen bg-white">
-      <div className="sticky top-0 bg-white border-b border-gray-200 z-10">
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between gap-4 mb-4">
+      <div className="sticky top-0 z-10 border-b border-gray-200 bg-white">
+        <div className="mx-auto max-w-4xl px-4 py-4">
+          <div className="mb-4 flex items-center justify-between gap-4">
             <Link
               href="/"
-              className="text-blue-600 hover:text-blue-800 flex items-center gap-2"
+              className="flex items-center gap-2 text-blue-600 hover:text-blue-800"
             >
               <span>←</span>
               <span>홈으로</span>
@@ -297,9 +472,10 @@ export default function BreakingPage() {
 
             <div className="text-center">
               <h1 className="text-2xl font-bold text-gray-900">속보</h1>
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="mt-1 text-xs text-gray-500">
                 최근 12시간 이내 국내·국제 뉴스 · 5분마다 자동 갱신
-                {getFormattedUpdateTime() && ` · 마지막 업데이트 ${getFormattedUpdateTime()}`}
+                {getFormattedUpdateTime() &&
+                  ` · 마지막 업데이트 ${getFormattedUpdateTime()}`}
               </p>
             </div>
 
@@ -307,14 +483,14 @@ export default function BreakingPage() {
               type="button"
               onClick={() => fetchNews(true)}
               disabled={refreshing}
-              className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 text-sm font-semibold whitespace-nowrap"
+              className="whitespace-nowrap rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
             >
               {refreshing ? '갱신 중...' : '즉시 갱신'}
             </button>
           </div>
 
           {error && (
-            <div className="mb-3 rounded-lg bg-red-50 border border-red-100 px-4 py-2 text-sm text-red-600">
+            <div className="mb-3 rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600">
               {error}
             </div>
           )}
@@ -352,13 +528,16 @@ export default function BreakingPage() {
             </div>
 
             <div className="mt-4">
-              <p className="mb-2 text-xs font-semibold text-gray-500">분류·출처 필터</p>
+              <p className="mb-2 text-xs font-semibold text-gray-500">
+                분류·출처 필터
+              </p>
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {filters.map((filter) => (
                   <button
                     key={filter}
+                    type="button"
                     onClick={() => setSelectedFilter(filter)}
-                    className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all text-sm ${
+                    className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-all ${
                       selectedFilter === filter
                         ? 'bg-blue-600 text-white shadow-sm'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -373,25 +552,28 @@ export default function BreakingPage() {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto">
+      <div className="mx-auto max-w-4xl">
         {filteredArticles.map((article, index) => {
           const category = getArticleCategory(article);
 
           return (
-            <a
+            <article
               key={`${article.source}-${article.link}-${index}`}
-              href={article.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block border-b border-gray-100 hover:bg-gray-50 transition-colors"
+              className="border-b border-gray-100 transition-colors hover:bg-gray-50"
             >
               <div className="flex gap-4 p-4">
-                <div className="flex-shrink-0 w-28 h-28 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center">
+                <a
+                  href={article.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex h-28 w-28 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100"
+                  title="원문 기사로 이동합니다."
+                >
                   {article.imageUrl ? (
                     <img
                       src={article.imageUrl}
                       alt={article.title}
-                      className="w-full h-full object-cover"
+                      className="h-full w-full object-cover"
                       onError={(event) => {
                         event.currentTarget.style.display = 'none';
                       }}
@@ -399,40 +581,51 @@ export default function BreakingPage() {
                   ) : (
                     <div className="text-4xl">{getSourceEmoji(article.source)}</div>
                   )}
-                </div>
+                </a>
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <span className={`font-bold text-sm ${getSourceColor(article.source)}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className={`text-sm font-bold ${getSourceColor(article.source)}`}>
                       {article.source}
                     </span>
                     <span
-                      className={`px-2 py-0.5 rounded-full text-xs font-semibold ${getCategoryBadgeClass(
-                        category
+                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${getCategoryBadgeClass(
+                        category,
                       )}`}
                     >
                       {category}
                     </span>
-                    <span className="text-gray-400 text-sm">
+                    <span className="text-sm text-gray-400">
                       {getRelativeTime(article.pubDate)}
                     </span>
                   </div>
 
-                  <h2 className="text-base font-bold text-gray-900 mb-2 line-clamp-2 leading-snug">
+                  <a
+                    href={article.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mb-2 block text-base font-bold leading-snug text-gray-900 line-clamp-2 hover:text-blue-600"
+                    title="원문 기사로 이동합니다."
+                  >
                     {article.title}
-                  </h2>
+                  </a>
 
-                  <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
+                  <p className="text-sm leading-relaxed text-gray-600 line-clamp-2">
                     {article.description}
                   </p>
+
+                  {renderArticleActions(article)}
+                  {renderTranslationPanel(article)}
                 </div>
               </div>
-            </a>
+            </article>
           );
         })}
 
         {filteredArticles.length === 0 && (
-          <div className="p-8 text-center text-gray-500">조회 조건에 맞는 속보가 없습니다.</div>
+          <div className="p-8 text-center text-gray-500">
+            조회 조건에 맞는 속보가 없습니다.
+          </div>
         )}
       </div>
     </div>
