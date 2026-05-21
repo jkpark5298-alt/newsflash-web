@@ -662,16 +662,22 @@ export default function Home() {
   }
 
   async function fetchBreakingNews() {
-    const breakingResponse = await fetch("/api/breaking", {
-      cache: "no-store",
-    });
+    try {
+      const breakingResponse = await fetch("/api/breaking", {
+        cache: "no-store",
+      });
 
-    if (!breakingResponse.ok) {
-      throw new Error("주요 속보를 불러오는데 실패했습니다.");
+      if (!breakingResponse.ok) {
+        throw new Error("주요 속보를 불러오는데 실패했습니다.");
+      }
+
+      const breakingData = await breakingResponse.json();
+      setBreakingNews(breakingData.articles || []);
+    } catch (err) {
+      console.error("주요 속보 로딩 에러:", err);
+      setBreakingNews([]);
+      setError("일부 뉴스 데이터 연동이 지연되고 있습니다.");
     }
-
-    const breakingData = await breakingResponse.json();
-    setBreakingNews(breakingData.articles || []);
   }
 
   async function fetchInternationalNews() {
@@ -697,16 +703,21 @@ export default function Home() {
   }
 
   async function fetchCartoons() {
-    const cartoonsResponse = await fetch("/api/cartoons", {
-      cache: "no-store",
-    });
+    try {
+      const cartoonsResponse = await fetch("/api/cartoons", {
+        cache: "no-store",
+      });
 
-    if (!cartoonsResponse.ok) {
-      return;
+      if (!cartoonsResponse.ok) {
+        return;
+      }
+
+      const cartoonsData = await cartoonsResponse.json();
+      setCartoons(cartoonsData.cartoons || []);
+    } catch (err) {
+      console.error("시사만평 로딩 에러:", err);
+      setCartoons([]);
     }
-
-    const cartoonsData = await cartoonsResponse.json();
-    setCartoons(cartoonsData.cartoons || []);
   }
 
   async function fetchCommunityIssues() {
@@ -732,43 +743,34 @@ export default function Home() {
   }
 
   useEffect(() => {
-    async function fetchInitialData() {
-      try {
-        await Promise.all([
-          fetchBreakingNews(),
-          fetchCartoons(),
-          fetchInternationalNews(),
-          fetchMarketData(),
-        ]);
-      } catch (err) {
-        console.error("뉴스 로딩 에러:", err);
-        setError(
-          err instanceof Error
-            ? err.message
-            : "알 수 없는 오류가 발생했습니다.",
-        );
-      } finally {
-        setLoading(false);
-      }
-    }
+    setLoading(false);
 
-    fetchInitialData();
-    fetchCommunityIssues();
+    void fetchMarketData();
+    void fetchBreakingNews();
+    void fetchCartoons();
+    void fetchInternationalNews();
+    void fetchCommunityIssues();
 
     const breakingInterval = setInterval(
-      fetchBreakingNews,
+      () => void fetchBreakingNews(),
       BREAKING_REFRESH_MS,
     );
-    const cartoonInterval = setInterval(fetchCartoons, CARTOON_REFRESH_MS);
+    const cartoonInterval = setInterval(
+      () => void fetchCartoons(),
+      CARTOON_REFRESH_MS,
+    );
     const communityInterval = setInterval(
-      fetchCommunityIssues,
+      () => void fetchCommunityIssues(),
       COMMUNITY_REFRESH_MS,
     );
     const internationalInterval = setInterval(
-      fetchInternationalNews,
+      () => void fetchInternationalNews(),
       INTERNATIONAL_REFRESH_MS,
     );
-    const marketInterval = setInterval(fetchMarketData, MARKET_REFRESH_MS);
+    const marketInterval = setInterval(
+      () => void fetchMarketData(),
+      MARKET_REFRESH_MS,
+    );
 
     return () => {
       clearInterval(breakingInterval);
@@ -1624,22 +1626,6 @@ export default function Home() {
     );
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-600 text-xl mb-4">⚠️ {error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            다시 시도
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
       <header className="bg-white shadow-md sticky top-0 z-50">
@@ -1670,6 +1656,12 @@ export default function Home() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
+        {error && (
+          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+            ⚠️ {error} 화면은 먼저 표시하고, 가능한 데이터부터 순차 갱신합니다.
+          </div>
+        )}
+
         <section className="mb-8">
           <div className="bg-white rounded-2xl shadow-md p-4">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
