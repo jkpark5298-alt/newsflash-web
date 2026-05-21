@@ -81,11 +81,19 @@ const US_MARKET_TARGETS = [
   },
 ];
 
+const US_POLICY_RATE_VALUE = '3.50~3.75%';
+const KOREA_POLICY_RATE_VALUE = '2.50%';
+const US_TREASURY_10Y_SYMBOL = '^TNX';
+
 function formatNumber(value: number, fractionDigits = 2) {
   return new Intl.NumberFormat('ko-KR', {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   }).format(value);
+}
+
+function formatPercentValue(value: number) {
+  return `${formatNumber(value)}%`;
 }
 
 function getLatestClose(result: YahooChartResult) {
@@ -260,35 +268,72 @@ async function fetchUsMarketSummary(): Promise<MarketItem> {
   };
 }
 
-function buildRatesItem(): MarketItem {
+async function fetchUsTreasury10Year() {
+  try {
+    const result = await fetchYahooChart(US_TREASURY_10Y_SYMBOL);
+    const current = result?.meta?.regularMarketPrice ?? getLatestClose(result ?? {});
+    const previous = result?.meta?.regularMarketPreviousClose ?? result?.meta?.chartPreviousClose;
+    const trend = getTrendValues(result);
+
+    if (typeof current !== 'number') {
+      throw new Error('미국 10년물 수익률을 확인할 수 없습니다.');
+    }
+
+    const changeRate =
+      typeof previous === 'number' && previous !== 0
+        ? current - previous
+        : null;
+
+    return {
+      value: formatPercentValue(current),
+      changeRate:
+        changeRate === null
+          ? 'Yahoo Finance 지연값'
+          : `${changeRate > 0 ? '+' : ''}${formatNumber(changeRate)}%p`,
+      trend,
+    };
+  } catch (error) {
+    console.error('미국 10년물 연동 에러:', error);
+
+    return {
+      value: '확인 중',
+      changeRate: 'Yahoo Finance 지연',
+      trend: [],
+    };
+  }
+}
+
+async function buildRatesItem(): Promise<MarketItem> {
+  const treasury10Year = await fetchUsTreasury10Year();
+
   return {
     key: 'rates',
     label: '금리',
-    symbol: 'FED/BOK/DGS10',
-    value: '미국 3.50~3.75%',
-    change: '한국 2.50% · 미국 10년물 4.42%',
-    changeRate: '1차 고정값',
-    status: 'ok',
+    symbol: `FED/BOK/${US_TREASURY_10Y_SYMBOL}`,
+    value: `미국 ${US_POLICY_RATE_VALUE}`,
+    change: `한국 ${KOREA_POLICY_RATE_VALUE} · 미국 10년물 ${treasury10Year.value}`,
+    changeRate: treasury10Year.changeRate,
+    status: treasury10Year.value === '확인 중' ? 'delay' : 'ok',
     description: '미국 기준금리 · 한국 기준금리 · 미국 10년물',
-    trend: [],
+    trend: treasury10Year.trend,
     details: [
       {
         label: '미국 기준금리',
-        value: '3.50~3.75%',
-        changeRate: '정책금리',
+        value: US_POLICY_RATE_VALUE,
+        changeRate: '수동 기준값',
         trend: [],
       },
       {
         label: '한국 기준금리',
-        value: '2.50%',
-        changeRate: '정책금리',
+        value: KOREA_POLICY_RATE_VALUE,
+        changeRate: '수동 기준값',
         trend: [],
       },
       {
         label: '미국 10년물',
-        value: '4.42%',
-        changeRate: '1차 고정값',
-        trend: [],
+        value: treasury10Year.value,
+        changeRate: treasury10Year.changeRate,
+        trend: treasury10Year.trend,
       },
     ],
   };
@@ -298,7 +343,7 @@ export async function GET() {
   const fetchedAt = new Date().toISOString();
   const primaryMarkets = await fetchPrimaryMarkets();
   const usMarket = await fetchUsMarketSummary();
-  const rates = buildRatesItem();
+  const rates = await buildRatesItem();
 
   return NextResponse.json({
     success: true,

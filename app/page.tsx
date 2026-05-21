@@ -932,13 +932,13 @@ export default function Home() {
       {
         label: "미국 기준금리",
         value: marketItem.value.replace("미국 ", ""),
-        change: "정책금리",
+        change: "수동 기준값",
         changeTone: "neutral",
       },
       {
         label: "한국 기준금리",
         value: (secondaryEntries.find((entry) => entry.startsWith("한국 ")) || "한국 준비 중").replace("한국 ", ""),
-        change: "정책금리",
+        change: "수동 기준값",
         changeTone: "neutral",
       },
       {
