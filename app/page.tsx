@@ -602,9 +602,6 @@ export default function Home() {
   const [internationalNews, setInternationalNews] = useState<Article[]>([]);
   const [cartoons, setCartoons] = useState<Cartoon[]>([]);
   const [communityIssues, setCommunityIssues] = useState<CommunityIssue[]>([]);
-  const [expandedCommunityId, setExpandedCommunityId] = useState<string | null>(
-    null,
-  );
   const [selectedRegion, setSelectedRegion] = useState<RegionFilter>("전체");
   const [selectedRegionKeyword, setSelectedRegionKeyword] = useState<
     string | null
@@ -1277,12 +1274,6 @@ export default function Home() {
     return !isKoreanText(text);
   };
 
-  const toggleCommunityDetail = (issueId: string) => {
-    setExpandedCommunityId((currentId) =>
-      currentId === issueId ? null : issueId,
-    );
-  };
-
   const renderArticleMeta = (article: Article) => {
     return (
       <div className="flex items-center gap-2 mb-2">
@@ -1583,66 +1574,41 @@ export default function Home() {
 
         {issues.length > 0 ? (
           <div className="space-y-4">
-            {issues.map((issue) => {
-              const isExpanded = expandedCommunityId === issue.id;
-
-              return (
-                <article
-                  key={issue.id}
-                  className="border-b border-gray-100 pb-4 last:border-b-0"
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    <span
-                      className={`text-xs font-semibold ${getSourceColor(issue.source)}`}
-                    >
-                      {getSourceEmoji(issue.source)} {issue.source}
-                    </span>
-                    <span className="text-gray-300 text-xs">·</span>
-                    <span className="text-gray-500 text-xs">
-                      {issue.category}
-                    </span>
-                    <span className="text-gray-300 text-xs">·</span>
-                    <span className="text-gray-400 text-xs">
-                      {getFormattedTime(issue.pubDate)}
-                    </span>
-                  </div>
-
-                  <a
-                    href={issue.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block font-semibold text-gray-800 line-clamp-2 mb-2 hover:text-blue-600"
-                    title="제목을 누르면 원문으로 이동합니다."
+            {issues.map((issue) => (
+              <article
+                key={issue.id}
+                className="border-b border-gray-100 pb-4 last:border-b-0"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span
+                    className={`text-xs font-semibold ${getSourceColor(issue.source)}`}
                   >
-                    {issue.title}
-                  </a>
-                  <p className="text-sm text-gray-600 line-clamp-2">
-                    {issue.summary}
-                  </p>
+                    {getSourceEmoji(issue.source)} {issue.source}
+                  </span>
+                  <span className="text-gray-300 text-xs">·</span>
+                  <span className="text-gray-500 text-xs">
+                    {issue.category}
+                  </span>
+                  <span className="text-gray-300 text-xs">·</span>
+                  <span className="text-gray-400 text-xs">
+                    {getFormattedTime(issue.pubDate)}
+                  </span>
+                </div>
 
-                  {isExpanded && (
-                    <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mt-3">
-                      <p className="text-xs font-semibold text-amber-700 mb-1">
-                        세부내용
-                      </p>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        {issue.detail}
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-3 mt-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleCommunityDetail(issue.id)}
-                      className="text-sm font-semibold text-blue-600 hover:text-blue-800"
-                    >
-                      {isExpanded ? "접기" : "내용 확인"}
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+                <a
+                  href={issue.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block font-semibold text-gray-800 line-clamp-2 mb-2 hover:text-blue-600"
+                  title="제목을 누르면 원문으로 이동합니다."
+                >
+                  {issue.title}
+                </a>
+                <p className="text-sm text-gray-600 line-clamp-2">
+                  {issue.summary}
+                </p>
+              </article>
+            ))}
           </div>
         ) : (
           <p className="text-sm text-gray-500">{emptyMessage}</p>
@@ -2360,14 +2326,14 @@ export default function Home() {
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {renderCommunityGroup(
-                "클리앙 알뜰구매 5개",
-                clienDealIssues,
-                "클리앙 알뜰구매 수집은 커뮤니티 API 확장 단계에서 연결 예정입니다.",
-              )}
-              {renderCommunityGroup(
                 "클리앙 모두의 광장 5개",
                 clienForumIssues,
                 "클리앙 모두의 광장 게시글을 불러오지 못했습니다.",
+              )}
+              {renderCommunityGroup(
+                "클리앙 알뜰구매 5개",
+                clienDealIssues,
+                "클리앙 알뜰구매 게시글을 불러오지 못했습니다.",
               )}
               {renderCommunityGroup(
                 "뽐뿌 자유게시판 5개",

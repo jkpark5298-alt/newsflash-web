@@ -28,15 +28,15 @@ const parser: Parser<object, CustomRSSItem> = new Parser<object, CustomRSSItem>(
   customFields: {
     item: [
       ['description', 'description'],
-      ['content:encoded', 'content']
-    ]
-  }
+      ['content:encoded', 'content'],
+    ],
+  },
 });
 
 const FETCH_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
 };
 
 function cleanText(value: string): string {
@@ -85,7 +85,7 @@ async function fetchText(url: string): Promise<string> {
     const response = await fetch(url, {
       headers: FETCH_HEADERS,
       signal: controller.signal,
-      cache: 'no-store'
+      cache: 'no-store',
     });
 
     if (!response.ok) {
@@ -115,7 +115,7 @@ async function fetchPpomppuRSS(): Promise<CommunityIssue[]> {
         pubDate: item.pubDate || item.isoDate || new Date().toISOString(),
         summary: limitText(rawDescription || '뽐뿌 자유게시판에서 올라온 커뮤니티 이슈입니다.', 110),
         detail: limitText(rawDescription || '원문에서 자세한 내용을 확인할 수 있습니다.', 260),
-        category: '자유게시판'
+        category: '자유게시판',
       };
     });
   } catch (error) {
@@ -160,7 +160,7 @@ async function fetchPpomppuHot(): Promise<CommunityIssue[]> {
         summary: '뽐뿌 HOT 게시글에서 확인된 커뮤니티 이슈입니다.',
         detail:
           '뽐뿌 HOT 게시글 목록에서 수집된 항목입니다. 커뮤니티 글은 검증된 뉴스가 아니므로 원문에서 맥락을 확인하세요.',
-        category: 'HOT'
+        category: 'HOT',
       });
     }
 
@@ -174,7 +174,7 @@ async function fetchPpomppuHot(): Promise<CommunityIssue[]> {
 async function fetchClienBoard(
   url: string,
   category: string,
-  limit: number
+  limit: number,
 ): Promise<CommunityIssue[]> {
   try {
     const html = await fetchText(url);
@@ -182,7 +182,7 @@ async function fetchClienBoard(
     const seenLinks = new Set<string>();
 
     const linkRegex =
-      /<a[^>]+href=["']([^"']*\/service\/board\/(?:park|news)\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+      /<a[^>]+href=["']([^"']*\/service\/board\/(?:park|news|jirum)\/\d+[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
 
     let match: RegExpExecArray | null;
 
@@ -215,7 +215,7 @@ async function fetchClienBoard(
         summary: `클리앙 ${category}에서 확인된 커뮤니티 이슈입니다.`,
         detail:
           '클리앙 공개 게시판 목록에서 수집된 항목입니다. 커뮤니티 글은 검증된 뉴스가 아니므로 원문에서 맥락을 확인하세요.',
-        category
+        category,
       });
     }
 
@@ -245,9 +245,10 @@ export async function GET() {
   try {
     const results = await Promise.allSettled([
       fetchClienBoard('https://www.clien.net/service/board/park', '모두의공원', 8),
+      fetchClienBoard('https://www.clien.net/service/board/jirum', '알뜰구매', 8),
       fetchClienBoard('https://www.clien.net/service/board/news', '새로운소식', 8),
       fetchPpomppuRSS(),
-      fetchPpomppuHot()
+      fetchPpomppuHot(),
     ]);
 
     const issues = results.flatMap((result) => {
@@ -258,7 +259,7 @@ export async function GET() {
       return [];
     });
 
-    const uniqueIssues = removeDuplicateIssues(issues).slice(0, 20);
+    const uniqueIssues = removeDuplicateIssues(issues).slice(0, 35);
 
     const sourceStats = uniqueIssues.reduce<Record<string, number>>((acc, issue) => {
       acc[issue.source] = (acc[issue.source] || 0) + 1;
@@ -270,7 +271,7 @@ export async function GET() {
       totalCount: uniqueIssues.length,
       sourceStats,
       lastUpdated: new Date().toISOString(),
-      notice: '커뮤니티 이슈는 검증된 뉴스가 아닌 이용자 반응 기반 정보입니다.'
+      notice: '커뮤니티 이슈는 검증된 뉴스가 아닌 이용자 반응 기반 정보입니다.',
     });
   } catch (error) {
     console.error('커뮤니티 API 에러:', error);
@@ -280,9 +281,9 @@ export async function GET() {
         issues: [],
         totalCount: 0,
         lastUpdated: new Date().toISOString(),
-        error: '커뮤니티 이슈를 불러오는데 실패했습니다.'
+        error: '커뮤니티 이슈를 불러오는데 실패했습니다.',
       },
-      { status: 200 }
+      { status: 200 },
     );
   }
 }
