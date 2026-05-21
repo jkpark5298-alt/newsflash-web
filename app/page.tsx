@@ -110,6 +110,18 @@ type SavedArticle = Article & {
   savedAt: string;
 };
 
+type TranslationResult = {
+  titleKo: string;
+  summaryKo: string;
+  notice?: string;
+};
+
+type TranslationState = {
+  loading?: boolean;
+  error?: string;
+  result?: TranslationResult;
+};
+
 type IssueGroup = Article & {
   issueKeyword: string;
   relatedCount: number;
@@ -620,6 +632,7 @@ export default function Home() {
   const [marketFetchedAt, setMarketFetchedAt] = useState<string | null>(null);
   const [marketError, setMarketError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
 
   async function fetchMarketData() {
     try {
@@ -1352,6 +1365,100 @@ export default function Home() {
     );
   };
 
+  const getTranslationKey = (article: Article) => article.link || article.title;
+
+  const requestArticleTranslation = async (article: Article) => {
+    const key = getTranslationKey(article);
+
+    setTranslations((current) => ({
+      ...current,
+      [key]: { loading: true },
+    }));
+
+    try {
+      const response = await fetch("/api/translate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: article.title,
+          description: article.description,
+          source: article.source,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("번역 요청에 실패했습니다.");
+      }
+
+      const data = await response.json();
+
+      setTranslations((current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          result: {
+            titleKo: data.titleKo || "번역 제목을 불러오지 못했습니다.",
+            summaryKo: data.summaryKo || "번역 요약을 불러오지 못했습니다.",
+            notice: data.notice,
+          },
+        },
+      }));
+    } catch (err) {
+      setTranslations((current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          error: err instanceof Error ? err.message : "번역을 불러오지 못했습니다.",
+        },
+      }));
+    }
+  };
+
+  const renderTranslationPanel = (article: Article) => {
+    const translation = translations[getTranslationKey(article)];
+
+    if (!translation) {
+      return null;
+    }
+
+    if (translation.loading) {
+      return (
+        <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-700">
+          번역을 불러오는 중입니다...
+        </div>
+      );
+    }
+
+    if (translation.error) {
+      return (
+        <div className="mt-3 rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-600">
+          {translation.error}
+        </div>
+      );
+    }
+
+    if (!translation.result) {
+      return null;
+    }
+
+    return (
+      <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3">
+        <p className="mb-1 text-xs font-bold text-blue-700">번역 결과</p>
+        <p className="text-sm font-semibold text-gray-900">
+          {translation.result.titleKo}
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-gray-700">
+          {translation.result.summaryKo}
+        </p>
+        {translation.result.notice && (
+          <p className="mt-2 text-xs text-gray-500">{translation.result.notice}</p>
+        )}
+      </div>
+    );
+  };
+
   const getArticleSearchUrl = (article: Article) => {
     return `https://www.google.com/search?q=${encodeURIComponent(article.title)}`;
   };
@@ -1742,10 +1849,12 @@ export default function Home() {
                             <>
                               <button
                                 type="button"
-                                className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700"
-                                title="번역 API는 다음 단계에서 연결합니다."
+                                onClick={() => requestArticleTranslation(article)}
+                                disabled={translations[getTranslationKey(article)]?.loading}
+                                className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+                                title="기사 제목과 요약을 한국어로 확인합니다."
                               >
-                                번역하기
+                                {translations[getTranslationKey(article)]?.loading ? "번역 중..." : "번역하기"}
                               </button>
                               <a
                                 href={getArticleSearchUrl(article)}
@@ -1759,6 +1868,7 @@ export default function Home() {
                             </>
                           )}
                         </div>
+                        {renderTranslationPanel(article)}
                       </article>
                     ))}
                   </div>
