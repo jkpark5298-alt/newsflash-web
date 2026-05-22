@@ -2351,7 +2351,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setIsEconomyNewsExpanded((current) => !current)}
-              className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
+              className="inline-flex items-center gap-1 border-0 bg-transparent p-0 text-sm font-semibold text-blue-600 shadow-none outline-none transition hover:text-blue-800 focus:outline-none focus:ring-0"
             >
               {isEconomyNewsExpanded ? "접기 ↑" : "더보기 →"}
             </button>
