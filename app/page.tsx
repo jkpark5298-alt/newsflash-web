@@ -12,7 +12,7 @@ const MARKET_REFRESH_MS = 10 * 60 * 1000;
 const SAVED_ARTICLES_STORAGE_KEY = "newsflash.savedArticles.v1";
 
 type RegionFilter = "전체" | "서울" | "경기도" | "부산";
-type DetailView = "속보" | "핵심 이슈" | "국제 뉴스" | "지역 이슈" | "보관함";
+type DetailView = "속보" | "핵심 이슈" | "국제 뉴스" | "경제 뉴스" | "지역 이슈" | "보관함";
 
 type EconomyIndicator = {
   key: string;
@@ -593,6 +593,7 @@ const DETAIL_VIEW_OPTIONS: DetailView[] = [
   "속보",
   "핵심 이슈",
   "국제 뉴스",
+  "경제 뉴스",
   "지역 이슈",
   "보관함",
 ];
@@ -630,6 +631,7 @@ export default function Home() {
   const [marketError, setMarketError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
+  const [isEconomyNewsExpanded, setIsEconomyNewsExpanded] = useState(false);
 
   async function fetchMarketData() {
     try {
@@ -929,13 +931,13 @@ export default function Home() {
       {
         label: "미국 기준금리",
         value: marketItem.value.replace("미국 ", ""),
-        change: "정책금리",
+        change: "수동 기준값",
         changeTone: "neutral",
       },
       {
         label: "한국 기준금리",
         value: (secondaryEntries.find((entry) => entry.startsWith("한국 ")) || "한국 준비 중").replace("한국 ", ""),
-        change: "정책금리",
+        change: "수동 기준값",
         changeTone: "neutral",
       },
       {
@@ -1068,7 +1070,7 @@ export default function Home() {
         const text = `${article.title} ${article.description}`;
         return economyKeywords.some((keyword) => text.includes(keyword));
       })
-      .slice(0, 6);
+      .slice(0, 20);
   }, [breakingNews, internationalNews]);
 
   const regionArticles = useMemo(() => {
@@ -1468,6 +1470,40 @@ export default function Home() {
     return `https://www.google.com/search?q=${encodeURIComponent(article.title)}`;
   };
 
+  const renderArticleTranslationActions = (article: Article) => {
+    if (!needsTranslation(article)) {
+      return null;
+    }
+
+    const translation = translations[getTranslationKey(article)];
+
+    return (
+      <>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => requestArticleTranslation(article)}
+            disabled={translation?.loading}
+            className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+            title="기사 제목과 요약을 한국어로 확인합니다."
+          >
+            {translation?.loading ? "번역 중..." : "번역하기"}
+          </button>
+          <a
+            href={getArticleSearchUrl(article)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
+            title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
+          >
+            제목 검색
+          </a>
+        </div>
+        {renderTranslationPanel(article)}
+      </>
+    );
+  };
+
   const renderIssueGroupBadge = (issue: IssueGroup) => {
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1531,6 +1567,7 @@ export default function Home() {
                 <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
                   {article.description}
                 </p>
+                {renderArticleTranslationActions(article)}
               </div>
             </div>
           </article>
@@ -1703,7 +1740,7 @@ export default function Home() {
         </section>
 
         {selectedDetailView && (
-          <section className="mb-12">
+          <section id="detail-view-section" className="mb-12 scroll-mt-32">
             {selectedDetailView === "속보" && (
               <div>
                 <div className="flex items-center gap-3 mb-5">
@@ -1757,6 +1794,7 @@ export default function Home() {
                                 관련 출처: {issue.relatedSources.join(" · ")}
                               </p>
                             )}
+                            {renderArticleTranslationActions(issue)}
                           </div>
                         </div>
                       </article>
@@ -1848,6 +1886,29 @@ export default function Home() {
                       국제 뉴스를 불러오지 못했습니다.
                     </p>
                   </div>
+                )}
+              </div>
+            )}
+
+            {selectedDetailView === "경제 뉴스" && (
+              <div>
+                <div className="flex items-center justify-between mb-5">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl">💰</span>
+                    <div>
+                      <h2 className="text-3xl font-bold text-gray-800">
+                        경제 뉴스 전체보기
+                      </h2>
+                      <p className="text-sm text-gray-500 mt-1">
+                        국내 경제·미국 증시·금리 관련 뉴스를 모아 확인합니다.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                {renderNewsList(
+                  economicNews,
+                  "경제 뉴스를 불러오는 중입니다.",
+                  20,
                 )}
               </div>
             )}
@@ -2241,6 +2302,7 @@ export default function Home() {
                           관련 출처: {issue.relatedSources.join(" · ")}
                         </p>
                       )}
+                      {renderArticleTranslationActions(issue)}
                     </div>
                   </div>
                 </article>
@@ -2286,12 +2348,19 @@ export default function Home() {
                 </p>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setIsEconomyNewsExpanded((current) => !current)}
+              className="text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
+            >
+              {isEconomyNewsExpanded ? "접기 ↑" : "더보기 →"}
+            </button>
           </div>
 
           {renderNewsList(
             economicNews,
             "경제 뉴스는 다음 단계에서 전용 API와 함께 보강 예정입니다.",
-            6,
+            isEconomyNewsExpanded ? 20 : 6,
           )}
         </section>
 
