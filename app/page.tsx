@@ -99,7 +99,7 @@ interface CommunityIssue {
   id: string;
   title: string;
   link: string;
-  source: "클리앙" | "뽐뿌";
+  source: "클리앙" | "뽐뿌" | "무료앱";
   pubDate: string;
   summary: string;
   detail: string;
@@ -929,13 +929,13 @@ export default function Home() {
       {
         label: "미국 기준금리",
         value: marketItem.value.replace("미국 ", ""),
-        change: "수동 기준값",
+        change: "정책금리",
         changeTone: "neutral",
       },
       {
         label: "한국 기준금리",
         value: (secondaryEntries.find((entry) => entry.startsWith("한국 ")) || "한국 준비 중").replace("한국 ", ""),
-        change: "수동 기준값",
+        change: "정책금리",
         changeTone: "neutral",
       },
       {
@@ -1142,6 +1142,14 @@ export default function Home() {
       .slice(0, 5);
   }, [communityIssues]);
 
+  const iphoneFreeAppIssues = useMemo(() => {
+    return communityIssues
+      .filter(
+        (issue) => issue.source === "무료앱" && issue.category.includes("오늘만무료"),
+      )
+      .slice(0, 5);
+  }, [communityIssues]);
+
   const getSourceEmoji = (source: string) => {
     switch (source) {
       case "SBS":
@@ -1167,6 +1175,8 @@ export default function Home() {
         return "💬";
       case "뽐뿌":
         return "🔥";
+      case "무료앱":
+        return "📱";
       default:
         return "📄";
     }
@@ -1197,6 +1207,8 @@ export default function Home() {
         return "text-orange-600";
       case "뽐뿌":
         return "text-pink-600";
+      case "무료앱":
+        return "text-emerald-600";
       default:
         return "text-gray-600";
     }
@@ -1456,41 +1468,6 @@ export default function Home() {
     return `https://www.google.com/search?q=${encodeURIComponent(article.title)}`;
   };
 
-
-  const renderArticleTranslationActions = (article: Article) => {
-    if (!needsTranslation(article)) {
-      return null;
-    }
-
-    const translation = translations[getTranslationKey(article)];
-
-    return (
-      <>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => requestArticleTranslation(article)}
-            disabled={translation?.loading}
-            className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
-            title="기사 제목과 요약을 한국어로 확인합니다."
-          >
-            {translation?.loading ? "번역 중..." : "번역하기"}
-          </button>
-          <a
-            href={getArticleSearchUrl(article)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
-            title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
-          >
-            제목 검색
-          </a>
-        </div>
-        {renderTranslationPanel(article)}
-      </>
-    );
-  };
-
   const renderIssueGroupBadge = (issue: IssueGroup) => {
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1554,7 +1531,6 @@ export default function Home() {
                 <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
                   {article.description}
                 </p>
-                {renderArticleTranslationActions(article)}
               </div>
             </div>
           </article>
@@ -1574,9 +1550,9 @@ export default function Home() {
 
         {issues.length > 0 ? (
           <div className="space-y-4">
-            {issues.map((issue) => (
+            {issues.map((issue, index) => (
               <article
-                key={issue.id}
+                key={`${issue.id}-${issue.link}-${index}`}
                 className="border-b border-gray-100 pb-4 last:border-b-0"
               >
                 <div className="flex items-center gap-2 mb-2">
@@ -1781,7 +1757,6 @@ export default function Home() {
                                 관련 출처: {issue.relatedSources.join(" · ")}
                               </p>
                             )}
-                            {renderArticleTranslationActions(issue)}
                           </div>
                         </div>
                       </article>
@@ -1839,7 +1814,31 @@ export default function Home() {
                         <p className="text-sm text-gray-600 line-clamp-3">
                           {article.description}
                         </p>
-                        {renderArticleTranslationActions(article)}
+                        <div className="flex flex-wrap items-center gap-2 mt-4">
+                          {needsTranslation(article) && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => requestArticleTranslation(article)}
+                                disabled={translations[getTranslationKey(article)]?.loading}
+                                className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+                                title="기사 제목과 요약을 한국어로 확인합니다."
+                              >
+                                {translations[getTranslationKey(article)]?.loading ? "번역 중..." : "번역하기"}
+                              </button>
+                              <a
+                                href={getArticleSearchUrl(article)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
+                                title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
+                              >
+                                제목 검색
+                              </a>
+                            </>
+                          )}
+                        </div>
+                        {renderTranslationPanel(article)}
                       </article>
                     ))}
                   </div>
@@ -2242,7 +2241,6 @@ export default function Home() {
                           관련 출처: {issue.relatedSources.join(" · ")}
                         </p>
                       )}
-                      {renderArticleTranslationActions(issue)}
                     </div>
                   </div>
                 </article>
@@ -2324,7 +2322,7 @@ export default function Home() {
               <p className="text-gray-500">커뮤니티 반응을 불러오는 중...</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               {renderCommunityGroup(
                 "클리앙 모두의 광장 5개",
                 clienForumIssues,
@@ -2339,6 +2337,11 @@ export default function Home() {
                 "뽐뿌 자유게시판 5개",
                 ppomppuFreeIssues,
                 "뽐뿌 자유게시판 게시글을 불러오지 못했습니다.",
+              )}
+              {renderCommunityGroup(
+                "아이폰 오늘만무료 App 5개",
+                iphoneFreeAppIssues,
+                "아이폰 오늘만무료 App 정보를 불러오지 못했습니다.",
               )}
             </div>
           )}

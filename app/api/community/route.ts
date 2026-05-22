@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 
-type CommunitySource = '클리앙' | '뽐뿌';
+type CommunitySource = '클리앙' | '뽐뿌' | '무료앱';
 
 interface CommunityIssue {
   id: string;
@@ -226,6 +226,66 @@ async function fetchClienBoard(
   }
 }
 
+async function fetchIphoneFreeApps(): Promise<CommunityIssue[]> {
+  try {
+    const html = await fetchText('https://freshapps.com/');
+    const issues: CommunityIssue[] = [];
+    const seenTitles = new Set<string>();
+
+    const headingRegex = /<h3[^>]*>([\s\S]*?)<\/h3>([\s\S]*?)(?=<h3|<\/body|$)/gi;
+    const sections: Array<{ title: string; link: string; meta: string; isFree: boolean }> = [];
+    let match: RegExpExecArray | null;
+
+    while ((match = headingRegex.exec(html)) !== null) {
+      const rawTitleBlock = match[1];
+      const rawMetaBlock = match[2] || '';
+      const title = cleanText(rawTitleBlock);
+
+      if (!title || title.length < 2 || seenTitles.has(title)) {
+        continue;
+      }
+
+      const combinedBlock = `${rawTitleBlock} ${rawMetaBlock}`;
+      const hrefMatch = combinedBlock.match(/href=["']([^"']+)["']/i);
+      const link = hrefMatch
+        ? makeAbsoluteUrl('https://freshapps.com/', hrefMatch[1])
+        : 'https://freshapps.com/';
+      const meta = limitText(rawMetaBlock, 140);
+      const isFree = /(?:→|&rarr;|-&gt;)\s*(?:free|\$0(?:\.00)?)/i.test(meta) || /gone\s+free/i.test(meta);
+
+      seenTitles.add(title);
+      sections.push({ title, link, meta, isFree });
+    }
+
+    const selectedSections = [
+      ...sections.filter((section) => section.isFree),
+      ...sections.filter((section) => !section.isFree),
+    ].slice(0, 5);
+
+    selectedSections.forEach((section) => {
+      const summary = section.isFree
+        ? `오늘만무료 또는 무료 전환 앱으로 확인되었습니다. ${section.meta}`
+        : `무료앱 공개 소스에서 확인한 iPhone 앱 할인 정보입니다. ${section.meta}`;
+
+      issues.push({
+        id: makeId('무료앱', section.link, section.title),
+        title: section.title,
+        link: section.link,
+        source: '무료앱',
+        pubDate: new Date().toISOString(),
+        summary: limitText(summary, 120),
+        detail: limitText(summary, 260),
+        category: '오늘만무료 App',
+      });
+    });
+
+    return issues;
+  } catch (error) {
+    console.error('아이폰 오늘만무료 App 수집 실패:', error);
+    return [];
+  }
+}
+
 function removeDuplicateIssues(issues: CommunityIssue[]): CommunityIssue[] {
   const seen = new Set<string>();
 
@@ -247,6 +307,7 @@ export async function GET() {
       fetchClienBoard('https://www.clien.net/service/board/park', '모두의공원', 8),
       fetchClienBoard('https://www.clien.net/service/board/jirum', '알뜰구매', 8),
       fetchClienBoard('https://www.clien.net/service/board/news', '새로운소식', 8),
+      fetchIphoneFreeApps(),
       fetchPpomppuRSS(),
       fetchPpomppuHot(),
     ]);
@@ -259,7 +320,7 @@ export async function GET() {
       return [];
     });
 
-    const uniqueIssues = removeDuplicateIssues(issues).slice(0, 35);
+    const uniqueIssues = removeDuplicateIssues(issues).slice(0, 45);
 
     const sourceStats = uniqueIssues.reduce<Record<string, number>>((acc, issue) => {
       acc[issue.source] = (acc[issue.source] || 0) + 1;
