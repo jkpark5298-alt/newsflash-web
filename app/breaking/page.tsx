@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import Link from 'next/link';
 
 const BREAKING_REFRESH_MS = 5 * 60 * 1000;
+const ALERT_KEYWORDS_STORAGE_KEY = 'newsflash.alertKeywords.v1';
+const ALERT_ENABLED_STORAGE_KEY = 'newsflash.alertEnabled.v1';
 
 type NewsCategory = '국내' | '국제';
 
@@ -49,6 +51,221 @@ export default function BreakingPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
 
+  // --- Notification & Keyword Alert Settings State & Logic ---
+  const [alertKeywords, setAlertKeywords] = useState<string[]>(() => {
+    if (typeof window === 'undefined') {
+      return [];
+    }
+    try {
+      const saved = window.localStorage.getItem(ALERT_KEYWORDS_STORAGE_KEY);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      console.error('알림 키워드 불러오기 에러:', err);
+      return [];
+    }
+  });
+
+  const [alertEnabled, setAlertEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+    try {
+      const saved = window.localStorage.getItem(ALERT_ENABLED_STORAGE_KEY);
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch (err) {
+      console.error('알림 상태 불러오기 에러:', err);
+      return true;
+    }
+  });
+
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const [keywordInput, setKeywordInput] = useState('');
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const seenArticlesRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }, []);
+
+  const sendArticleNotification = (article: Article) => {
+    if (typeof window === 'undefined') return;
+
+    if (!('Notification' in window)) {
+      alert('이 브라우저는 알림 기능을 지원하지 않습니다.');
+      return;
+    }
+
+    const translation = translations[getTranslationKey(article)]?.result;
+    const displayTitle = translation ? translation.titleKo : article.title;
+    const displayBody = translation ? translation.summaryKo : article.description;
+
+    const showNotification = () => {
+      try {
+        const options: NotificationOptions = {
+          body: displayBody || '자세한 내용은 클릭하여 확인하세요.',
+          icon: article.imageUrl || '/icons/icon-192.png',
+          tag: article.link || article.title,
+          data: {
+            url: article.link
+          }
+        };
+
+        const notification = new Notification(displayTitle, options);
+        notification.onclick = () => {
+          window.focus();
+          window.open(article.link, '_blank');
+        };
+      } catch (e) {
+        console.error('알림 발송 실패:', e);
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then((registration) => {
+            registration.showNotification(displayTitle, {
+              body: displayBody || '자세한 내용은 클릭하여 확인하세요.',
+              icon: article.imageUrl || '/icons/icon-192.png',
+              tag: article.link || article.title,
+              data: {
+                url: article.link
+              }
+            });
+          }).catch(err => console.error('서비스 워커 알림 실패:', err));
+        }
+      }
+    };
+
+    if (Notification.permission === 'granted') {
+      showNotification();
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then((permission) => {
+        setNotificationPermission(permission);
+        if (permission === 'granted') {
+          showNotification();
+        }
+      });
+    } else {
+      alert('알림 권한이 거부되어 있습니다. 브라우저 설정에서 알림 권한을 허용해주세요.');
+    }
+  };
+
+  const checkNewArticlesForKeywords = (newsArticles: Article[]) => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (!alertEnabled || alertKeywords.length === 0 || Notification.permission !== 'granted') return;
+
+    const newArticles = newsArticles.filter(art => !seenArticlesRef.current.has(art.link));
+    if (newArticles.length === 0) return;
+
+    newArticles.forEach(article => {
+      const textToSearch = `${article.title} ${article.description}`.toLowerCase();
+      
+      const matchedKeyword = alertKeywords.find(kw => {
+        if (kw.includes('+')) {
+          const subKeywords = kw.split('+').map(s => s.trim().toLowerCase()).filter(Boolean);
+          return subKeywords.length > 0 && subKeywords.every(sub => textToSearch.includes(sub));
+        }
+        return textToSearch.includes(kw.trim().toLowerCase());
+      });
+
+      if (matchedKeyword) {
+        try {
+          const displayTitle = `🚨 [속보 알림: ${matchedKeyword}] ${article.title}`;
+          const options: NotificationOptions = {
+            body: article.description || '자세한 내용은 클릭하여 확인하세요.',
+            icon: article.imageUrl || '/icons/icon-192.png',
+            tag: article.link || article.title,
+            data: {
+              url: article.link
+            }
+          };
+
+          const notification = new Notification(displayTitle, options);
+          notification.onclick = () => {
+            window.focus();
+            window.open(article.link, '_blank');
+          };
+        } catch (e) {
+          console.error('자동 속보 알림 전송 실패:', e);
+        }
+      }
+    });
+  };
+
+  const handleAddOrEditKeyword = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = keywordInput.trim();
+    if (!trimmed) return;
+
+    if (editingIndex !== null) {
+      setAlertKeywords((current) => {
+        const updated = [...current];
+        updated[editingIndex] = trimmed;
+        return updated;
+      });
+      setEditingIndex(null);
+    } else {
+      if (alertKeywords.includes(trimmed)) {
+        alert('이미 등록된 키워드입니다.');
+        return;
+      }
+      setAlertKeywords((current) => [...current, trimmed]);
+    }
+    setKeywordInput('');
+  };
+
+  const startEditingKeyword = (index: number) => {
+    setKeywordInput(alertKeywords[index]);
+    setEditingIndex(index);
+  };
+
+  const cancelEditing = () => {
+    setKeywordInput('');
+    setEditingIndex(null);
+  };
+
+  const deleteKeyword = (index: number) => {
+    setAlertKeywords((current) => current.filter((_, idx) => idx !== index));
+    if (editingIndex === index) {
+      setKeywordInput('');
+      setEditingIndex(null);
+    }
+  };
+
+  const saveKeywordSettings = () => {
+    try {
+      window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
+      window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(alertEnabled));
+
+      if (alertEnabled && Notification.permission !== 'granted') {
+        Notification.requestPermission().then((permission) => {
+          setNotificationPermission(permission);
+          if (permission === 'granted') {
+            alert('키워드 알림 설정이 저장되었으며 알림 권한이 허용되었습니다.');
+          } else {
+            alert('키워드 알림 설정이 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.');
+          }
+        });
+      } else {
+        alert('알림 설정이 정상적으로 저장되었습니다.');
+      }
+    } catch (err) {
+      console.error('알림 설정 저장 오류:', err);
+      alert('설정을 저장하는데 오류가 발생했습니다.');
+    }
+  };
+
+  const toggleAlertEnabled = () => {
+    const nextState = !alertEnabled;
+    setAlertEnabled(nextState);
+
+    if (nextState && Notification.permission !== 'granted') {
+      Notification.requestPermission().then((permission) => {
+        setNotificationPermission(permission);
+      });
+    }
+  };
+
   async function fetchNews(isManualRefresh = false) {
     try {
       if (isManualRefresh) {
@@ -73,7 +290,16 @@ export default function BreakingPage() {
         throw new Error(data.error);
       }
 
-      setArticles(data.articles || []);
+      const dataArticles = data.articles || [];
+
+      if (seenArticlesRef.current.size === 0) {
+        dataArticles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+      } else {
+        checkNewArticlesForKeywords(dataArticles);
+        dataArticles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+      }
+
+      setArticles(dataArticles);
       setLastUpdated(data.lastUpdated || new Date().toISOString());
     } catch (err) {
       console.error('속보 로딩 에러:', err);
@@ -479,15 +705,129 @@ export default function BreakingPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => fetchNews(true)}
-              disabled={refreshing}
-              className="whitespace-nowrap rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-            >
-              {refreshing ? '갱신 중...' : '즉시 갱신'}
-            </button>
+            <div className="flex gap-2 whitespace-nowrap">
+              <button
+                type="button"
+                onClick={() => setShowSettings(!showSettings)}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold border transition cursor-pointer ${
+                  showSettings
+                    ? 'bg-amber-500 text-white border-amber-600'
+                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                }`}
+              >
+                🔔 알림 안내판
+              </button>
+              <button
+                type="button"
+                onClick={() => fetchNews(true)}
+                disabled={refreshing}
+                className="whitespace-nowrap rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60 cursor-pointer"
+              >
+                {refreshing ? '갱신 중...' : '즉시 갱신'}
+              </button>
+            </div>
           </div>
+
+          {showSettings && (
+            <div className="mb-4 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 pb-4 border-b border-gray-100 gap-4">
+                <div>
+                  <h3 className="font-semibold text-gray-800 text-sm">실시간 속보 키워드 알림 상태</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {notificationPermission === 'granted'
+                      ? '알림 권한이 허용되었습니다.'
+                      : notificationPermission === 'denied'
+                      ? '알림 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.'
+                      : '알림 권한 요청이 필요합니다.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleAlertEnabled}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                    alertEnabled && notificationPermission === 'granted'
+                      ? 'bg-green-600 text-white hover:bg-green-700'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  {alertEnabled && notificationPermission === 'granted' ? '알림 ON' : '알림 OFF'}
+                </button>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-800 text-sm mb-1">알림 키워드 관리 (속보 알림 안내판)</h3>
+                <p className="text-xs text-gray-500 mb-2">
+                  💡 단일(영화, 친구) 또는 동시 포함(영화+액션) 형태로 입력 가능합니다.
+                </p>
+                <form onSubmit={handleAddOrEditKeyword} className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    value={keywordInput}
+                    onChange={(e) => setKeywordInput(e.target.value)}
+                    placeholder="알림 단어 입력 (예: 영화, 친구, 영화+액션)"
+                    className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 rounded-xl bg-blue-600 text-white font-semibold text-xs hover:bg-blue-700 transition"
+                  >
+                    {editingIndex !== null ? '수정' : '추가'}
+                  </button>
+                  {editingIndex !== null && (
+                    <button
+                      type="button"
+                      onClick={cancelEditing}
+                      className="px-3 py-1.5 rounded-xl bg-gray-100 text-gray-600 font-semibold text-xs hover:bg-gray-200 transition"
+                    >
+                      취소
+                    </button>
+                  )}
+                </form>
+
+                {alertKeywords.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    {alertKeywords.map((word, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-1 bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full text-xs font-semibold border border-blue-100"
+                      >
+                        <span>{word}</span>
+                        <button
+                          type="button"
+                          onClick={() => startEditingKeyword(idx)}
+                          className="hover:text-blue-900 ml-1 font-bold text-[10px] text-blue-500"
+                          title="수정"
+                        >
+                          수정
+                        </button>
+                        <span className="text-gray-300">|</span>
+                        <button
+                          type="button"
+                          onClick={() => deleteKeyword(idx)}
+                          className="hover:text-red-600 font-bold text-[10px] text-blue-500"
+                          title="삭제"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-400 text-xs mb-4">등록된 알림 키워드가 없습니다.</p>
+                )}
+
+                <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
+                  <button
+                    type="button"
+                    onClick={saveKeywordSettings}
+                    className="px-4 py-2 rounded-xl bg-gray-900 text-white font-bold text-xs hover:bg-gray-800 transition"
+                  >
+                    설정 저장
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="mb-3 rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600">

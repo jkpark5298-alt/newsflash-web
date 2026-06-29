@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -10,9 +10,12 @@ const CARTOON_REFRESH_MS = 60 * 60 * 1000;
 const INTERNATIONAL_REFRESH_MS = 15 * 60 * 1000;
 const MARKET_REFRESH_MS = 10 * 60 * 1000;
 const SAVED_ARTICLES_STORAGE_KEY = "newsflash.savedArticles.v1";
+const ALERT_KEYWORDS_STORAGE_KEY = "newsflash.alertKeywords.v1";
+const ALERT_ENABLED_STORAGE_KEY = "newsflash.alertEnabled.v1";
+const SCHEDULED_ALERT_ENABLED_STORAGE_KEY = "newsflash.scheduledAlertEnabled.v1";
 
 type RegionFilter = "전체" | "서울" | "경기도" | "부산";
-type DetailView = "속보" | "핵심 이슈" | "국제 뉴스" | "경제 뉴스" | "지역 이슈" | "보관함";
+type DetailView = "속보" | "핵심 이슈" | "국제 뉴스" | "경제 뉴스" | "지역 이슈" | "보관함" | "알림 안내판";
 
 type EconomyIndicator = {
   key: string;
@@ -596,6 +599,7 @@ const DETAIL_VIEW_OPTIONS: DetailView[] = [
   "경제 뉴스",
   "지역 이슈",
   "보관함",
+  "알림 안내판",
 ];
 
 export default function Home() {
@@ -632,6 +636,250 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
   const [isEconomyNewsExpanded, setIsEconomyNewsExpanded] = useState(false);
+
+  // --- Notification & Keyword Alert Settings State & Logic ---
+  const [alertKeywords, setAlertKeywords] = useState<string[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+    try {
+      const saved = window.localStorage.getItem(ALERT_KEYWORDS_STORAGE_KEY);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      console.error("알림 키워드 불러오기 에러:", err);
+      return [];
+    }
+  });
+
+  const [alertEnabled, setAlertEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+    try {
+      const saved = window.localStorage.getItem(ALERT_ENABLED_STORAGE_KEY);
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch (err) {
+      console.error("알림 상태 불러오기 에러:", err);
+      return true;
+    }
+  });
+
+  const [scheduledAlertEnabled, setScheduledAlertEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+    try {
+      const saved = window.localStorage.getItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY);
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch (err) {
+      console.error("정기 알림 상태 불러오기 에러:", err);
+      return true;
+    }
+  });
+
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
+  const [keywordInput, setKeywordInput] = useState("");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const seenArticlesRef = useRef<Set<string>>(new Set());
+  const sentScheduledAlertsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }, []);
+
+  const toggleScheduledAlertEnabled = () => {
+    const nextState = !scheduledAlertEnabled;
+    setScheduledAlertEnabled(nextState);
+    try {
+      window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, JSON.stringify(nextState));
+    } catch (err) {
+      console.error("정기 알림 상태 저장 에러:", err);
+    }
+
+    if (nextState && Notification.permission !== "granted") {
+      Notification.requestPermission().then((permission) => {
+        setNotificationPermission(permission);
+      });
+    }
+  };
+
+  const sendArticleNotification = (article: Article) => {
+    if (typeof window === "undefined") return;
+
+    if (!("Notification" in window)) {
+      alert("이 브라우저는 알림 기능을 지원하지 않습니다.");
+      return;
+    }
+
+    const translation = translations[getTranslationKey(article)]?.result;
+    const displayTitle = translation ? translation.titleKo : article.title;
+    const displayBody = translation ? translation.summaryKo : article.description;
+
+    const showNotification = () => {
+      try {
+        const options: NotificationOptions = {
+          body: displayBody || "자세한 내용은 클릭하여 확인하세요.",
+          icon: article.imageUrl || "/icons/icon-192.png",
+          tag: article.link || article.title,
+          data: {
+            url: article.link
+          }
+        };
+
+        const notification = new Notification(displayTitle, options);
+        notification.onclick = () => {
+          window.focus();
+          window.open(article.link, "_blank");
+        };
+      } catch (e) {
+        console.error("알림 발송 실패:", e);
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.ready.then((registration) => {
+            registration.showNotification(displayTitle, {
+              body: displayBody || "자세한 내용은 클릭하여 확인하세요.",
+              icon: article.imageUrl || "/icons/icon-192.png",
+              tag: article.link || article.title,
+              data: {
+                url: article.link
+              }
+            });
+          }).catch(err => console.error("서비스 워커 알림 실패:", err));
+        }
+      }
+    };
+
+    if (Notification.permission === "granted") {
+      showNotification();
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then((permission) => {
+        setNotificationPermission(permission);
+        if (permission === "granted") {
+          showNotification();
+        }
+      });
+    } else {
+      alert("알림 권한이 거부되어 있습니다. 브라우저 설정에서 알림 권한을 허용해주세요.");
+    }
+  };
+
+  const checkNewArticlesForKeywords = (articles: Article[]) => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (!alertEnabled || alertKeywords.length === 0 || Notification.permission !== "granted") return;
+
+    const newArticles = articles.filter(art => !seenArticlesRef.current.has(art.link));
+    if (newArticles.length === 0) return;
+
+    newArticles.forEach(article => {
+      const textToSearch = `${article.title} ${article.description}`.toLowerCase();
+      
+      const matchedKeyword = alertKeywords.find(kw => {
+        if (kw.includes("+")) {
+          const subKeywords = kw.split("+").map(s => s.trim().toLowerCase()).filter(Boolean);
+          return subKeywords.length > 0 && subKeywords.every(sub => textToSearch.includes(sub));
+        }
+        return textToSearch.includes(kw.trim().toLowerCase());
+      });
+
+      if (matchedKeyword) {
+        try {
+          const displayTitle = `🚨 [속보 알림: ${matchedKeyword}] ${article.title}`;
+          const options: NotificationOptions = {
+            body: article.description || "자세한 내용은 클릭하여 확인하세요.",
+            icon: article.imageUrl || "/icons/icon-192.png",
+            tag: article.link || article.title,
+            data: {
+              url: article.link
+            }
+          };
+
+          const notification = new Notification(displayTitle, options);
+          notification.onclick = () => {
+            window.focus();
+            window.open(article.link, "_blank");
+          };
+        } catch (e) {
+          console.error("자동 속보 알림 전송 실패:", e);
+        }
+      }
+    });
+  };
+
+  const handleAddOrEditKeyword = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = keywordInput.trim();
+    if (!trimmed) return;
+
+    if (editingIndex !== null) {
+      setAlertKeywords((current) => {
+        const updated = [...current];
+        updated[editingIndex] = trimmed;
+        return updated;
+      });
+      setEditingIndex(null);
+    } else {
+      if (alertKeywords.includes(trimmed)) {
+        alert("이미 등록된 키워드입니다.");
+        return;
+      }
+      setAlertKeywords((current) => [...current, trimmed]);
+    }
+    setKeywordInput("");
+  };
+
+  const startEditingKeyword = (index: number) => {
+    setKeywordInput(alertKeywords[index]);
+    setEditingIndex(index);
+  };
+
+  const cancelEditing = () => {
+    setKeywordInput("");
+    setEditingIndex(null);
+  };
+
+  const deleteKeyword = (index: number) => {
+    setAlertKeywords((current) => current.filter((_, idx) => idx !== index));
+    if (editingIndex === index) {
+      setKeywordInput("");
+      setEditingIndex(null);
+    }
+  };
+
+  const saveKeywordSettings = () => {
+    try {
+      window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
+      window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(alertEnabled));
+
+      if (alertEnabled && Notification.permission !== "granted") {
+        Notification.requestPermission().then((permission) => {
+          setNotificationPermission(permission);
+          if (permission === "granted") {
+            alert("키워드 알림 설정이 저장되었으며 알림 권한이 허용되었습니다.");
+          } else {
+            alert("키워드 알림 설정이 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.");
+          }
+        });
+      } else {
+        alert("알림 설정이 정상적으로 저장되었습니다.");
+      }
+    } catch (err) {
+      console.error("알림 설정 저장 오류:", err);
+      alert("설정을 저장하는데 오류가 발생했습니다.");
+    }
+  };
+
+  const toggleAlertEnabled = () => {
+    const nextState = !alertEnabled;
+    setAlertEnabled(nextState);
+
+    if (nextState && Notification.permission !== "granted") {
+      Notification.requestPermission().then((permission) => {
+        setNotificationPermission(permission);
+      });
+    }
+  };
 
   async function fetchMarketData() {
     try {
@@ -671,7 +919,16 @@ export default function Home() {
       }
 
       const breakingData = await breakingResponse.json();
-      setBreakingNews(breakingData.articles || []);
+      const articles = breakingData.articles || [];
+
+      if (seenArticlesRef.current.size === 0) {
+        articles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+      } else {
+        checkNewArticlesForKeywords(articles);
+        articles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+      }
+
+      setBreakingNews(articles);
     } catch (err) {
       console.error("주요 속보 로딩 에러:", err);
       setBreakingNews([]);
@@ -896,6 +1153,101 @@ export default function Home() {
       };
     });
   }, [marketData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+
+    const checkScheduledAlerts = () => {
+      if (!scheduledAlertEnabled || Notification.permission !== "granted") return;
+
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const date = String(now.getDate()).padStart(2, "0");
+      const hours = String(now.getHours()).padStart(2, "0");
+      const minutes = String(now.getMinutes()).padStart(2, "0");
+      const timeStr = `${hours}:${minutes}`;
+      const dateStr = `${year}-${month}-${date}`;
+
+      // 1. 정기 뉴스 알림 (07, 09, 12, 14, 16, 18, 20, 22시 정각)
+      const newsHours = ["07:00", "09:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"];
+      if (newsHours.includes(timeStr)) {
+        const alertKey = `${dateStr}-${timeStr}-news`;
+        if (!sentScheduledAlertsRef.current.has(alertKey) && breakingNews.length > 0) {
+          sentScheduledAlertsRef.current.add(alertKey);
+          
+          const top5 = breakingNews.slice(0, 5);
+          const title = `📰 [정기 뉴스 알림] ${hours}시 최신 뉴스 5선`;
+          const body = top5.map((art, idx) => `${idx + 1}. ${art.title}`).join("\n");
+          
+          try {
+            const notification = new Notification(title, {
+              body,
+              icon: top5[0]?.imageUrl || "/icons/icon-192.png",
+              tag: alertKey,
+            });
+            notification.onclick = () => {
+              window.focus();
+            };
+          } catch (e) {
+            console.error("정기 뉴스 알림 발송 실패:", e);
+          }
+        }
+      }
+
+      // 2. 정기 주가지수 알림 (07:00, 12:00, 16:00 정각)
+      const stockHours = ["07:00", "12:00", "16:00"];
+      if (stockHours.includes(timeStr)) {
+        const alertKey = `${dateStr}-${timeStr}-stock`;
+        if (!sentScheduledAlertsRef.current.has(alertKey)) {
+          sentScheduledAlertsRef.current.add(alertKey);
+
+          let title = "";
+          let body = "";
+
+          if (timeStr === "07:00") {
+            title = `📊 [아침 증시 알림] 전일 KOSPI 및 미 증시 현황`;
+            const kospiCard = koreanMarketCards.find(c => c.label.toUpperCase() === "KOSPI");
+            const dowCard = usMarketCards.find(c => c.label.toUpperCase() === "DOW");
+            const nasdaqCard = usMarketCards.find(c => c.label.toUpperCase() === "NASDAQ");
+            const spCard = usMarketCards.find(c => c.label.toUpperCase() === "S&P500");
+
+            body = [
+              `· KOSPI: ${kospiCard?.value || "-"} (${kospiCard?.change || "-"})`,
+              `· DOW: ${dowCard?.value || "-"} (${dowCard?.change || "-"})`,
+              `· NASDAQ: ${nasdaqCard?.value || "-"} (${nasdaqCard?.change || "-"})`,
+              `· S&P500: ${spCard?.value || "-"} (${spCard?.change || "-"})`,
+            ].join("\n");
+          } else {
+            title = `📊 [${hours}시 증시 알림] KOSPI · KOSDAQ 현황`;
+            const kospiCard = koreanMarketCards.find(c => c.label.toUpperCase() === "KOSPI");
+            const kosdaqCard = koreanMarketCards.find(c => c.label.toUpperCase() === "KOSDAQ");
+
+            body = [
+              `· KOSPI: ${kospiCard?.value || "-"} (${kospiCard?.change || "-"})`,
+              `· KOSDAQ: ${kosdaqCard?.value || "-"} (${kosdaqCard?.change || "-"})`,
+            ].join("\n");
+          }
+
+          try {
+            const notification = new Notification(title, {
+              body,
+              icon: "/icons/icon-192.png",
+              tag: alertKey,
+            });
+            notification.onclick = () => {
+              window.focus();
+            };
+          } catch (e) {
+            console.error("정기 증시 알림 발송 실패:", e);
+          }
+        }
+      }
+    };
+
+    const timer = setInterval(checkScheduledAlerts, 20000);
+    return () => clearInterval(timer);
+  }, [scheduledAlertEnabled, breakingNews, koreanMarketCards, usMarketCards]);
 
   const fxRateCard = useMemo<CompactMarketCard>(() => {
     const indicator = economyIndicators.find((item) => item.key === "usdkrw");
@@ -1470,34 +1822,34 @@ export default function Home() {
     return `https://www.google.com/search?q=${encodeURIComponent(article.title)}`;
   };
 
-  const renderArticleTranslationActions = (article: Article) => {
-    if (!needsTranslation(article)) {
-      return null;
-    }
-
+  const renderArticleActions = (article: Article) => {
     const translation = translations[getTranslationKey(article)];
 
     return (
       <>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => requestArticleTranslation(article)}
-            disabled={translation?.loading}
-            className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
-            title="기사 제목과 요약을 한국어로 확인합니다."
-          >
-            {translation?.loading ? "번역 중..." : "번역하기"}
-          </button>
-          <a
-            href={getArticleSearchUrl(article)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
-            title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
-          >
-            제목 검색
-          </a>
+          {needsTranslation(article) && (
+            <>
+              <button
+                type="button"
+                onClick={() => requestArticleTranslation(article)}
+                disabled={translation?.loading}
+                className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+                title="기사 제목과 요약을 한국어로 확인합니다."
+              >
+                {translation?.loading ? "번역 중..." : "번역하기"}
+              </button>
+              <a
+                href={getArticleSearchUrl(article)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
+                title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
+              >
+                제목 검색
+              </a>
+            </>
+          )}
         </div>
         {renderTranslationPanel(article)}
       </>
@@ -1567,7 +1919,7 @@ export default function Home() {
                 <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
                   {article.description}
                 </p>
-                {renderArticleTranslationActions(article)}
+                {renderArticleActions(article)}
               </div>
             </div>
           </article>
@@ -1656,15 +2008,30 @@ export default function Home() {
               </p>
             </div>
 
-            <div className="text-sm text-gray-500 md:text-right">
+            <div className="text-sm text-gray-500 md:text-right flex flex-col items-end gap-2 md:flex-row md:items-center">
               <p>{todayText}</p>
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                className="mt-2 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-              >
-                새로고침
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedDetailView("알림 안내판");
+                    setTimeout(() => {
+                      document.getElementById("detail-view-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }, 50);
+                  }}
+                  className="rounded-full bg-amber-500 px-4 py-1.5 text-xs font-bold text-white hover:bg-amber-600 shadow-sm transition flex items-center gap-1 cursor-pointer"
+                >
+                  <span>🔔</span>
+                  <span>알림 안내판</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="rounded-full bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 cursor-pointer"
+                >
+                  새로고침
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1794,7 +2161,7 @@ export default function Home() {
                                 관련 출처: {issue.relatedSources.join(" · ")}
                               </p>
                             )}
-                            {renderArticleTranslationActions(issue)}
+                            {renderArticleActions(issue)}
                           </div>
                         </div>
                       </article>
@@ -1852,31 +2219,7 @@ export default function Home() {
                         <p className="text-sm text-gray-600 line-clamp-3">
                           {article.description}
                         </p>
-                        <div className="flex flex-wrap items-center gap-2 mt-4">
-                          {needsTranslation(article) && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => requestArticleTranslation(article)}
-                                disabled={translations[getTranslationKey(article)]?.loading}
-                                className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
-                                title="기사 제목과 요약을 한국어로 확인합니다."
-                              >
-                                {translations[getTranslationKey(article)]?.loading ? "번역 중..." : "번역하기"}
-                              </button>
-                              <a
-                                href={getArticleSearchUrl(article)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
-                                title="원문 사이트가 차단될 때 기사 제목으로 검색합니다."
-                              >
-                                제목 검색
-                              </a>
-                            </>
-                          )}
-                        </div>
-                        {renderTranslationPanel(article)}
+                        {renderArticleActions(article)}
                       </article>
                     ))}
                   </div>
@@ -2052,6 +2395,7 @@ export default function Home() {
                               <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
                                 {article.description}
                               </p>
+                              {renderArticleActions(article)}
                             </div>
                           </div>
                         </article>
@@ -2121,6 +2465,7 @@ export default function Home() {
                             <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">
                               {article.description}
                             </p>
+                            {renderArticleActions(article)}
                             <p className="mt-2 text-xs text-gray-400">
                               보관일:{" "}
                               {new Date(article.savedAt).toLocaleString(
@@ -2150,6 +2495,153 @@ export default function Home() {
                 </div>
               </div>
             )}
+
+            {selectedDetailView === "알림 안내판" && (
+              <div>
+                <div className="flex items-center gap-3 mb-5">
+                  <span className="text-3xl">🔔</span>
+                  <div>
+                    <h2 className="text-3xl font-bold text-gray-800">
+                      속보 알림 안내판
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-1">
+                      원하는 단어(키워드)를 등록해두시면 관련 속보 기사가 발생할 때 즉시 알림을 보내드립니다.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-md p-6">
+                  {/* 1. Notification Permission Status & Enable Toggle */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 pb-6 border-b border-gray-100 gap-4">
+                    <div>
+                      <h3 className="font-semibold text-gray-800">실시간 키워드 알림 상태</h3>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {notificationPermission === "granted"
+                          ? "알림 권한이 허용되었습니다."
+                          : notificationPermission === "denied"
+                          ? "알림 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요."
+                          : "알림 권한 요청이 필요합니다."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={toggleAlertEnabled}
+                      className={`px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer ${
+                        alertEnabled && notificationPermission === "granted"
+                          ? "bg-green-600 text-white hover:bg-green-700"
+                          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      }`}
+                    >
+                      {alertEnabled && notificationPermission === "granted" ? "알림 ON" : "알림 OFF"}
+                    </button>
+                  </div>
+
+                  {/* 1-2. Scheduled Alert Status & Enable Toggle */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 pb-6 border-b border-gray-100 gap-4">
+                    <div>
+                      <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
+                        <span>⏰</span>
+                        <span>정기 시간대 뉴스 및 주가지수 알림</span>
+                      </h3>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                        · <b>뉴스 5선</b>: 매일 07, 09, 12, 14, 16, 18, 20, 22시 정각에 최신 뉴스 5개 요약 알림<br/>
+                        · <b>주가지수</b>: 07시(전일 KOSPI & 미 증시 지수), 12시/16시(현재 KOSPI, KOSDAQ 지수) 알림
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={toggleScheduledAlertEnabled}
+                      className={`px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer whitespace-nowrap ${
+                        scheduledAlertEnabled && notificationPermission === "granted"
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      }`}
+                    >
+                      {scheduledAlertEnabled && notificationPermission === "granted" ? "정기알림 ON" : "정기알림 OFF"}
+                    </button>
+                  </div>
+
+                  {/* 2. Keyword input and list */}
+                  <div>
+                    <h3 className="font-semibold text-gray-800 mb-1">알림 키워드 관리 (복수 등록 가능)</h3>
+                    <p className="text-xs text-gray-500 mb-3">
+                      💡 <b>단일 입력</b>: <code className="bg-gray-100 px-1 py-0.5 rounded text-blue-600">영화</code>, <code className="bg-gray-100 px-1 py-0.5 rounded text-blue-600">친구</code> (각 단어 등장 시 알림)<br/>
+                      💡 <b>동시 포함(AND) 입력</b>: <code className="bg-gray-100 px-1 py-0.5 rounded text-blue-600">영화+액션</code> (두 단어가 모두 들어간 기사만 알림)
+                    </p>
+                    
+                    {/* Input area */}
+                    <form onSubmit={handleAddOrEditKeyword} className="flex gap-2 mb-4">
+                      <input
+                        type="text"
+                        value={keywordInput}
+                        onChange={(e) => setKeywordInput(e.target.value)}
+                        placeholder="알림받을 단어를 입력하세요 (예: 영화, 친구, 영화+액션)"
+                        className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                      />
+                      <button
+                        type="submit"
+                        className="px-5 py-2.5 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition cursor-pointer"
+                      >
+                        {editingIndex !== null ? "수정" : "추가"}
+                      </button>
+                      {editingIndex !== null && (
+                        <button
+                          type="button"
+                          onClick={cancelEditing}
+                          className="px-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 font-semibold text-sm hover:bg-gray-200 transition cursor-pointer"
+                        >
+                          취소
+                        </button>
+                      )}
+                    </form>
+
+                    {/* Saved Keyword List */}
+                    {alertKeywords.length > 0 ? (
+                      <div className="flex flex-wrap gap-2 mb-6">
+                        {alertKeywords.map((word, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3.5 py-1.5 rounded-full text-sm font-semibold border border-blue-100"
+                          >
+                            <span>{word}</span>
+                            <button
+                              type="button"
+                              onClick={() => startEditingKeyword(idx)}
+                              className="hover:text-blue-900 ml-1 text-xs text-blue-500 font-bold"
+                              title="수정"
+                            >
+                              수정
+                            </button>
+                            <span className="text-gray-300 font-light">|</span>
+                            <button
+                              type="button"
+                              onClick={() => deleteKeyword(idx)}
+                              className="hover:text-red-600 text-xs text-blue-500 font-bold"
+                              title="삭제"
+                            >
+                              삭제
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-400 text-sm mb-6">등록된 알림 키워드가 없습니다. 단어를 입력하고 추가해주세요.</p>
+                    )}
+
+                    {/* 3. Save to localStorage */}
+                    <div className="flex justify-end gap-2 border-t border-gray-100 pt-6">
+                      <button
+                        type="button"
+                        onClick={saveKeywordSettings}
+                        className="px-6 py-3 rounded-xl bg-gray-900 text-white font-bold text-sm hover:bg-gray-800 transition"
+                      >
+                        설정 저장
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -2171,7 +2663,7 @@ export default function Home() {
                   ? `업데이트: ${new Date(marketFetchedAt).toLocaleString("ko-KR")}`
                   : marketError || "KOSPI · KOSDAQ · USD/KRW 우선 연동 준비 중"}
               </p>
-            </div>
+             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -2302,7 +2794,7 @@ export default function Home() {
                           관련 출처: {issue.relatedSources.join(" · ")}
                         </p>
                       )}
-                      {renderArticleTranslationActions(issue)}
+                      {renderArticleActions(issue)}
                     </div>
                   </div>
                 </article>
