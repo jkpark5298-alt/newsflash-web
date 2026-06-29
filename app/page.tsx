@@ -13,6 +13,24 @@ const SAVED_ARTICLES_STORAGE_KEY = "newsflash.savedArticles.v1";
 const ALERT_KEYWORDS_STORAGE_KEY = "newsflash.alertKeywords.v1";
 const ALERT_ENABLED_STORAGE_KEY = "newsflash.alertEnabled.v1";
 const SCHEDULED_ALERT_ENABLED_STORAGE_KEY = "newsflash.scheduledAlertEnabled.v1";
+const RECENT_SCHEDULED_NEWS_STORAGE_KEY = "newsflash.recentScheduledNews.v1";
+const SAVED_SCHEDULED_NEWS_STORAGE_KEY = "newsflash.savedScheduledNews.v1";
+const RECENT_SCHEDULED_STOCK_STORAGE_KEY = "newsflash.recentScheduledStock.v1";
+const SAVED_SCHEDULED_STOCK_STORAGE_KEY = "newsflash.savedScheduledStock.v1";
+
+export interface ScheduledNewsAlertItem {
+  id: string;
+  timeTitle: string;
+  articles: Article[];
+  timestamp: string;
+}
+
+export interface ScheduledStockAlertItem {
+  id: string;
+  timeTitle: string;
+  content: string;
+  timestamp: string;
+}
 
 type RegionFilter = "전체" | "서울" | "경기도" | "부산";
 type DetailView = "속보" | "핵심 이슈" | "국제 뉴스" | "경제 뉴스" | "지역 이슈" | "보관함" | "알림 안내판";
@@ -681,6 +699,130 @@ export default function Home() {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const [keywordInput, setKeywordInput] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [recentScheduledNews, setRecentScheduledNews] = useState<ScheduledNewsAlertItem | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const saved = window.localStorage.getItem(RECENT_SCHEDULED_NEWS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  });
+
+  const [savedScheduledNews, setSavedScheduledNews] = useState<ScheduledNewsAlertItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = window.localStorage.getItem(SAVED_SCHEDULED_NEWS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
+  });
+
+  const [recentScheduledStock, setRecentScheduledStock] = useState<ScheduledStockAlertItem | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const saved = window.localStorage.getItem(RECENT_SCHEDULED_STOCK_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  });
+
+  const [savedScheduledStock, setSavedScheduledStock] = useState<ScheduledStockAlertItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = window.localStorage.getItem(SAVED_SCHEDULED_STOCK_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
+  });
+
+  const triggerScheduledNewsRecord = (title: string, articlesList: Article[]) => {
+    const item: ScheduledNewsAlertItem = {
+      id: `news-${Date.now()}`,
+      timeTitle: title,
+      articles: articlesList.slice(0, 5),
+      timestamp: new Date().toISOString(),
+    };
+    setRecentScheduledNews(item);
+    try {
+      window.localStorage.setItem(RECENT_SCHEDULED_NEWS_STORAGE_KEY, JSON.stringify(item));
+    } catch (e) { console.error(e); }
+  };
+
+  const triggerScheduledStockRecord = (title: string, contentStr: string) => {
+    const item: ScheduledStockAlertItem = {
+      id: `stock-${Date.now()}`,
+      timeTitle: title,
+      content: contentStr,
+      timestamp: new Date().toISOString(),
+    };
+    setRecentScheduledStock(item);
+    try {
+      window.localStorage.setItem(RECENT_SCHEDULED_STOCK_STORAGE_KEY, JSON.stringify(item));
+    } catch (e) { console.error(e); }
+  };
+
+  const saveRecentScheduledNewsToPersistent = () => {
+    if (!recentScheduledNews) return;
+    setSavedScheduledNews((prev) => {
+      if (prev.some((item) => item.id === recentScheduledNews.id)) {
+        alert("이미 보관함에 저장된 기록입니다.");
+        return prev;
+      }
+      const updated = [recentScheduledNews, ...prev];
+      try {
+        window.localStorage.setItem(SAVED_SCHEDULED_NEWS_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) { console.error(e); }
+      return updated;
+    });
+    alert("최근 정기 뉴스 알림이 지속 보관함에 저장되었습니다.");
+  };
+
+  const deleteRecentScheduledNews = () => {
+    setRecentScheduledNews(null);
+    try {
+      window.localStorage.removeItem(RECENT_SCHEDULED_NEWS_STORAGE_KEY);
+    } catch (e) { console.error(e); }
+  };
+
+  const deleteSavedScheduledNews = (id: string) => {
+    setSavedScheduledNews((prev) => {
+      const updated = prev.filter((item) => item.id !== id);
+      try {
+        window.localStorage.setItem(SAVED_SCHEDULED_NEWS_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) { console.error(e); }
+      return updated;
+    });
+  };
+
+  const saveRecentScheduledStockToPersistent = () => {
+    if (!recentScheduledStock) return;
+    setSavedScheduledStock((prev) => {
+      if (prev.some((item) => item.id === recentScheduledStock.id)) {
+        alert("이미 보관함에 저장된 기록입니다.");
+        return prev;
+      }
+      const updated = [recentScheduledStock, ...prev];
+      try {
+        window.localStorage.setItem(SAVED_SCHEDULED_STOCK_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) { console.error(e); }
+      return updated;
+    });
+    alert("최근 정기 주가지수 알림이 지속 보관함에 저장되었습니다.");
+  };
+
+  const deleteRecentScheduledStock = () => {
+    setRecentScheduledStock(null);
+    try {
+      window.localStorage.removeItem(RECENT_SCHEDULED_STOCK_STORAGE_KEY);
+    } catch (e) { console.error(e); }
+  };
+
+  const deleteSavedScheduledStock = (id: string) => {
+    setSavedScheduledStock((prev) => {
+      const updated = prev.filter((item) => item.id !== id);
+      try {
+        window.localStorage.setItem(SAVED_SCHEDULED_STOCK_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) { console.error(e); }
+      return updated;
+    });
+  };
+
   const seenArticlesRef = useRef<Set<string>>(new Set());
   const sentScheduledAlertsRef = useRef<Set<string>>(new Set());
 
@@ -1192,6 +1334,7 @@ export default function Home() {
           } catch (e) {
             console.error("정기 뉴스 알림 발송 실패:", e);
           }
+          triggerScheduledNewsRecord(title, top5);
         }
       }
 
@@ -1241,6 +1384,7 @@ export default function Home() {
           } catch (e) {
             console.error("정기 증시 알림 발송 실패:", e);
           }
+          triggerScheduledStockRecord(title, body);
         }
       }
     };
@@ -2633,10 +2777,203 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={saveKeywordSettings}
-                        className="px-6 py-3 rounded-xl bg-gray-900 text-white font-bold text-sm hover:bg-gray-800 transition"
+                        className="px-6 py-3 rounded-xl bg-gray-900 text-white font-bold text-sm hover:bg-gray-800 transition cursor-pointer"
                       >
                         설정 저장
                       </button>
+                    </div>
+
+                    {/* 3. Recent Scheduled Alert Recording & Management (1 item per prev slot) */}
+                    <div className="mt-8 border-t border-gray-100 pt-6">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+                        <div>
+                          <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
+                            <span>📥</span>
+                            <span>최근 정기 알림 기록 (직전 회차 1개 관리)</span>
+                          </h3>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            직전 시간대에 전달된 뉴스 5선 및 주가지수 알림을 확인하고 보관하거나 삭제할 수 있습니다.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const sampleNewsTitle = `📰 [정기 뉴스 알림] ${new Date().getHours()}시 최신 뉴스 5선`;
+                            const sampleStockTitle = `📊 [${new Date().getHours()}시 증시 알림] KOSPI · KOSDAQ 현황`;
+                            const kospiCard = koreanMarketCards.find(c => c.label.toUpperCase() === "KOSPI");
+                            const kosdaqCard = koreanMarketCards.find(c => c.label.toUpperCase() === "KOSDAQ");
+                            const sampleStockContent = [
+                              `· KOSPI: ${kospiCard?.value || "2,750.12"} (${kospiCard?.change || "+0.45%"})`,
+                              `· KOSDAQ: ${kosdaqCard?.value || "890.30"} (${kosdaqCard?.change || "+0.12%"})`,
+                            ].join("\n");
+
+                            triggerScheduledNewsRecord(sampleNewsTitle, breakingNews.length > 0 ? breakingNews : [
+                              { title: "샘플 속보 기사 1: 경제 지표 호조세 지속", link: "https://example.com", pubDate: new Date().toISOString(), description: "경제지표 설명", source: "연합뉴스" },
+                              { title: "샘플 속보 기사 2: 글로벌 증시 반등 흐름", link: "https://example.com", pubDate: new Date().toISOString(), description: "증시 설명", source: "SBS" },
+                            ]);
+                            triggerScheduledStockRecord(sampleStockTitle, sampleStockContent);
+                            alert("가상 정기 알림 1회가 최근 기록으로 저장되었습니다. 아래에서 내용을 확인해 보세요!");
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 text-xs font-bold transition cursor-pointer whitespace-nowrap"
+                        >
+                          ⚡ 테스트 알림 즉시 기록 생성
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        {/* News Card */}
+                        <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-blue-700 bg-blue-100 px-2.5 py-0.5 rounded-full">
+                                직전 정기 뉴스 알림
+                              </span>
+                              {recentScheduledNews && (
+                                <span className="text-[11px] text-gray-400">
+                                  {new Date(recentScheduledNews.timestamp).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              )}
+                            </div>
+
+                            {recentScheduledNews ? (
+                              <div>
+                                <h4 className="font-bold text-gray-800 text-sm mb-2">{recentScheduledNews.timeTitle}</h4>
+                                <ul className="space-y-1.5 text-xs text-gray-700">
+                                  {recentScheduledNews.articles.map((art, idx) => (
+                                    <li key={idx} className="line-clamp-1 flex items-start gap-1">
+                                      <span className="text-blue-500 font-bold">{idx + 1}.</span>
+                                      <a href={art.link} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                                        {art.title}
+                                      </a>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-gray-400 py-4 text-center">아직 기록된 직전 정기 뉴스 알림이 없습니다.</p>
+                            )}
+                          </div>
+
+                          {recentScheduledNews && (
+                            <div className="flex gap-2 mt-4 pt-3 border-t border-blue-100/60">
+                              <button
+                                type="button"
+                                onClick={saveRecentScheduledNewsToPersistent}
+                                className="flex-1 py-1.5 rounded-xl bg-blue-600 text-white font-semibold text-xs hover:bg-blue-700 transition cursor-pointer"
+                              >
+                                📌 보관함에 저장
+                              </button>
+                              <button
+                                type="button"
+                                onClick={deleteRecentScheduledNews}
+                                className="px-3 py-1.5 rounded-xl bg-gray-200 text-gray-700 font-semibold text-xs hover:bg-gray-300 transition cursor-pointer"
+                              >
+                                🗑️ 삭제
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Stock Card */}
+                        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                                직전 정기 주가지수 알림
+                              </span>
+                              {recentScheduledStock && (
+                                <span className="text-[11px] text-gray-400">
+                                  {new Date(recentScheduledStock.timestamp).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              )}
+                            </div>
+
+                            {recentScheduledStock ? (
+                              <div>
+                                <h4 className="font-bold text-gray-800 text-sm mb-2">{recentScheduledStock.timeTitle}</h4>
+                                <pre className="whitespace-pre-wrap font-sans text-xs text-gray-700 leading-relaxed bg-white/70 p-2.5 rounded-xl border border-emerald-100/50">
+                                  {recentScheduledStock.content}
+                                </pre>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-gray-400 py-4 text-center">아직 기록된 직전 정기 주가지수 알림이 없습니다.</p>
+                            )}
+                          </div>
+
+                          {recentScheduledStock && (
+                            <div className="flex gap-2 mt-4 pt-3 border-t border-emerald-100/60">
+                              <button
+                                type="button"
+                                onClick={saveRecentScheduledStockToPersistent}
+                                className="flex-1 py-1.5 rounded-xl bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition cursor-pointer"
+                              >
+                                📌 보관함에 저장
+                              </button>
+                              <button
+                                type="button"
+                                onClick={deleteRecentScheduledStock}
+                                className="px-3 py-1.5 rounded-xl bg-gray-200 text-gray-700 font-semibold text-xs hover:bg-gray-300 transition cursor-pointer"
+                              >
+                                🗑️ 삭제
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Persistent Saved Scheduled Alerts */}
+                      {(savedScheduledNews.length > 0 || savedScheduledStock.length > 0) && (
+                        <div className="mt-6 bg-gray-50 rounded-2xl p-4 border border-gray-100">
+                          <h4 className="font-bold text-gray-800 text-xs mb-3 flex items-center gap-1">
+                            <span>📁</span>
+                            <span>보관함에 저장된 정기 알림 기록 목록</span>
+                          </h4>
+
+                          <div className="space-y-3">
+                            {savedScheduledNews.map((item) => (
+                              <div key={item.id} className="bg-white p-3 rounded-xl border border-gray-200 text-xs flex justify-between items-start gap-2">
+                                <div>
+                                  <span className="font-bold text-blue-600">{item.timeTitle}</span>
+                                  <span className="text-[10px] text-gray-400 ml-2">
+                                    {new Date(item.timestamp).toLocaleString("ko-KR")}
+                                  </span>
+                                  <ul className="mt-1 space-y-0.5 text-gray-600">
+                                    {item.articles.map((art, idx) => (
+                                      <li key={idx} className="line-clamp-1">• {art.title}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteSavedScheduledNews(item.id)}
+                                  className="text-red-500 hover:text-red-700 font-bold text-xs whitespace-nowrap px-2 py-1 rounded hover:bg-red-50"
+                                >
+                                  삭제
+                                </button>
+                              </div>
+                            ))}
+
+                            {savedScheduledStock.map((item) => (
+                              <div key={item.id} className="bg-white p-3 rounded-xl border border-gray-200 text-xs flex justify-between items-start gap-2">
+                                <div>
+                                  <span className="font-bold text-emerald-600">{item.timeTitle}</span>
+                                  <span className="text-[10px] text-gray-400 ml-2">
+                                    {new Date(item.timestamp).toLocaleString("ko-KR")}
+                                  </span>
+                                  <pre className="mt-1 whitespace-pre-wrap font-sans text-gray-600">{item.content}</pre>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteSavedScheduledStock(item.id)}
+                                  className="text-red-500 hover:text-red-700 font-bold text-xs whitespace-nowrap px-2 py-1 rounded hover:bg-red-50"
+                                >
+                                  삭제
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
