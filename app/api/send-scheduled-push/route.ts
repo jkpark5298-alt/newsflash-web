@@ -104,7 +104,8 @@ export async function GET(request: Request) {
     try {
       const newsRes = await fetch(`${protocol}://${host}/api/breaking`, { cache: "no-store" });
       if (newsRes.ok) {
-        breakingNews = await newsRes.json();
+        const newsData = await newsRes.json();
+        breakingNews = Array.isArray(newsData.articles) ? newsData.articles : [];
       }
     } catch (e) {
       console.error("속보 데이터 조회 실패:", e);
@@ -115,7 +116,8 @@ export async function GET(request: Request) {
     try {
       const marketRes = await fetch(`${protocol}://${host}/api/market`, { cache: "no-store" });
       if (marketRes.ok) {
-        marketData = await marketRes.json();
+        const marketResponseData = await marketRes.json();
+        marketData = Array.isArray(marketResponseData.markets) ? marketResponseData.markets : [];
       }
     } catch (e) {
       console.error("시장 지표 데이터 조회 실패:", e);
