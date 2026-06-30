@@ -656,45 +656,9 @@ export default function Home() {
   const [isEconomyNewsExpanded, setIsEconomyNewsExpanded] = useState(false);
 
   // --- Notification & Keyword Alert Settings State & Logic ---
-  const [alertKeywords, setAlertKeywords] = useState<string[]>(() => {
-    if (typeof window === "undefined") {
-      return [];
-    }
-    try {
-      const saved = window.localStorage.getItem(ALERT_KEYWORDS_STORAGE_KEY);
-      const parsed = saved ? JSON.parse(saved) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (err) {
-      console.error("알림 키워드 불러오기 에러:", err);
-      return [];
-    }
-  });
-
-  const [alertEnabled, setAlertEnabled] = useState<boolean>(() => {
-    if (typeof window === "undefined") {
-      return true;
-    }
-    try {
-      const saved = window.localStorage.getItem(ALERT_ENABLED_STORAGE_KEY);
-      return saved !== null ? JSON.parse(saved) : true;
-    } catch (err) {
-      console.error("알림 상태 불러오기 에러:", err);
-      return true;
-    }
-  });
-
-  const [scheduledAlertEnabled, setScheduledAlertEnabled] = useState<boolean>(() => {
-    if (typeof window === "undefined") {
-      return true;
-    }
-    try {
-      const saved = window.localStorage.getItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY);
-      return saved !== null ? JSON.parse(saved) : true;
-    } catch (err) {
-      console.error("정기 알림 상태 불러오기 에러:", err);
-      return true;
-    }
-  });
+  const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
+  const [alertEnabled, setAlertEnabled] = useState<boolean>(false);
+  const [scheduledAlertEnabled, setScheduledAlertEnabled] = useState<boolean>(false);
 
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const [keywordInput, setKeywordInput] = useState("");
@@ -917,11 +881,39 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      setNotificationPermission(Notification.permission);
-      // 최초 실행 시 알림이 켜져있다면 다시 서비스워커 및 구독 보장
-      if (alertEnabled || scheduledAlertEnabled) {
-        enablePushNotification().catch(console.error);
+    if (typeof window !== "undefined") {
+      try {
+        const savedKeywords = window.localStorage.getItem(ALERT_KEYWORDS_STORAGE_KEY);
+        if (savedKeywords) {
+          const parsed = JSON.parse(savedKeywords);
+          if (Array.isArray(parsed)) setAlertKeywords(parsed);
+        }
+
+        const savedAlert = window.localStorage.getItem(ALERT_ENABLED_STORAGE_KEY);
+        if (savedAlert !== null) {
+          setAlertEnabled(JSON.parse(savedAlert));
+        }
+
+        const savedScheduled = window.localStorage.getItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY);
+        if (savedScheduled !== null) {
+          setScheduledAlertEnabled(JSON.parse(savedScheduled));
+        }
+      } catch (e) {
+        console.error("알림 설정 복원 에러:", e);
+      }
+
+      if ("Notification" in window) {
+        setNotificationPermission(Notification.permission);
+        try {
+          const storedAlert = window.localStorage.getItem(ALERT_ENABLED_STORAGE_KEY);
+          const storedScheduled = window.localStorage.getItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY);
+          const isAlertOn = storedAlert ? JSON.parse(storedAlert) : false;
+          const isScheduledOn = storedScheduled ? JSON.parse(storedScheduled) : false;
+
+          if (isAlertOn || isScheduledOn) {
+            enablePushNotification().catch(console.error);
+          }
+        } catch (e) {}
       }
     }
   }, []);
@@ -1087,14 +1079,15 @@ export default function Home() {
     try {
       window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
       window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(alertEnabled));
+      window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, JSON.stringify(scheduledAlertEnabled));
 
-      if (alertEnabled && Notification.permission !== "granted") {
+      if ((alertEnabled || scheduledAlertEnabled) && Notification.permission !== "granted") {
         Notification.requestPermission().then((permission) => {
           setNotificationPermission(permission);
           if (permission === "granted") {
-            alert("키워드 알림 설정이 저장되었으며 알림 권한이 허용되었습니다.");
+            alert("알림 설정이 저장되었으며 알림 권한이 허용되었습니다.");
           } else {
-            alert("키워드 알림 설정이 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.");
+            alert("알림 설정이 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.");
           }
         });
       } else {
