@@ -1,0 +1,17 @@
+{
+  "name": "NewsFlash",
+  "short_name": "NewsFlash",
+  "description": "실시간 뉴스, 속보 및 경제 지표 알림 서비스",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

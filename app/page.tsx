@@ -826,9 +826,103 @@ export default function Home() {
   const seenArticlesRef = useRef<Set<string>>(new Set());
   const sentScheduledAlertsRef = useRef<Set<string>>(new Set());
 
+  // Base64 VAPID Key를 Uint8Array로 변환
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  // 백엔드 백그라운드 웹 푸시 알림 등록
+  const enablePushNotification = async () => {
+    if (typeof window === "undefined") return;
+    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+      console.warn("이 브라우저는 백그라운드 웹 푸시 알림을 지원하지 않습니다.");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission !== "granted") {
+      return;
+    }
+
+    try {
+      // 1. 서비스 워커 등록
+      await navigator.serviceWorker.register("/sw.js");
+      const registration = await navigator.serviceWorker.ready;
+
+      // 2. 이미 존재하는 구독 정보 확인
+      let subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        // 3. 백엔드에서 VAPID Public Key를 동적으로 받아와 구독 신청
+        const res = await fetch("/api/push-subscriptions");
+        if (!res.ok) throw new Error("VAPID 키 조회 실패");
+        const { vapidPublicKey } = await res.json();
+
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        });
+      }
+
+      // 4. 구독 정보를 서버에 저장
+      await fetch("/api/push-subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subscription,
+          userAgent: navigator.userAgent,
+        }),
+      });
+
+      console.log("백그라운드 웹 푸시 구독이 안전하게 백엔드에 연동되었습니다.");
+    } catch (e) {
+      console.error("백그라운드 웹 푸시 연동 실패:", e);
+    }
+  };
+
+  // 백엔드 백그라운드 웹 푸시 알림 해제
+  const disablePushNotification = async () => {
+    if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+
+      if (subscription) {
+        // 1. 서버 측 구독 데이터 삭제
+        await fetch("/api/push-subscriptions", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            endpoint: subscription.endpoint,
+          }),
+        });
+
+        // 2. 브라우저 구독 해제
+        await subscription.unsubscribe();
+        console.log("백그라운드 웹 푸시 구독이 해제되었습니다.");
+      }
+    } catch (e) {
+      console.error("백그라운드 웹 푸시 해제 에러:", e);
+    }
+  };
+
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
       setNotificationPermission(Notification.permission);
+      // 최초 실행 시 알림이 켜져있다면 다시 서비스워커 및 구독 보장
+      if (alertEnabled || scheduledAlertEnabled) {
+        enablePushNotification().catch(console.error);
+      }
     }
   }, []);
 
@@ -841,10 +935,10 @@ export default function Home() {
       console.error("정기 알림 상태 저장 에러:", err);
     }
 
-    if (nextState && Notification.permission !== "granted") {
-      Notification.requestPermission().then((permission) => {
-        setNotificationPermission(permission);
-      });
+    if (nextState) {
+      enablePushNotification().catch(console.error);
+    } else if (!alertEnabled) {
+      disablePushNotification().catch(console.error);
     }
   };
 
@@ -1016,10 +1110,10 @@ export default function Home() {
     const nextState = !alertEnabled;
     setAlertEnabled(nextState);
 
-    if (nextState && Notification.permission !== "granted") {
-      Notification.requestPermission().then((permission) => {
-        setNotificationPermission(permission);
-      });
+    if (nextState) {
+      enablePushNotification().catch(console.error);
+    } else if (!scheduledAlertEnabled) {
+      disablePushNotification().catch(console.error);
     }
   };
 
@@ -2812,7 +2906,18 @@ export default function Home() {
                               { title: "샘플 속보 기사 2: 글로벌 증시 반등 흐름", link: "https://example.com", pubDate: new Date().toISOString(), description: "증시 설명", source: "SBS" },
                             ]);
                             triggerScheduledStockRecord(sampleStockTitle, sampleStockContent);
-                            alert("가상 정기 알림 1회가 최근 기록으로 저장되었습니다. 아래에서 내용을 확인해 보세요!");
+                            
+                            // 백엔드 백그라운드 웹 푸시 알림 즉시 발송 테스트
+                            fetch("/api/send-scheduled-push?force=true&test=true")
+                              .then(res => res.json())
+                              .then(data => {
+                                console.log("백엔드 웹 푸시 발송 성공:", data);
+                              })
+                              .catch(err => {
+                                console.error("백엔드 웹 푸시 발송 에러:", err);
+                              });
+
+                            alert("가상 정기 알림 1회가 로컬 기록으로 저장되었습니다. 정기알림 상태가 ON인 경우, 잠시 후 백그라운드 푸시 팝업이 발송됩니다!");
                           }}
                           className="px-3.5 py-1.5 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 text-xs font-bold transition cursor-pointer whitespace-nowrap"
                         >
