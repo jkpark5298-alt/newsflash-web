@@ -904,16 +904,24 @@ export default function Home() {
 
       if ("Notification" in window) {
         setNotificationPermission(Notification.permission);
-        try {
-          const storedAlert = window.localStorage.getItem(ALERT_ENABLED_STORAGE_KEY);
-          const storedScheduled = window.localStorage.getItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY);
-          const isAlertOn = storedAlert ? JSON.parse(storedAlert) : false;
-          const isScheduledOn = storedScheduled ? JSON.parse(storedScheduled) : false;
+      }
 
-          if (isAlertOn || isScheduledOn) {
-            enablePushNotification().catch(console.error);
+      // 실제 OS 레벨 백그라운드 푸시 구독 유무를 체크하여 강제 자동 복원 (iOS PWA 로컬스토리지 누락 우회)
+      if ("serviceWorker" in navigator && "PushManager" in window) {
+        navigator.serviceWorker.ready.then((registration) => {
+          return registration.pushManager.getSubscription();
+        }).then((subscription) => {
+          if (subscription) {
+            setAlertEnabled(true);
+            setScheduledAlertEnabled(true);
+            try {
+              window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, "true");
+              window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, "true");
+            } catch (e) {}
           }
-        } catch (e) {}
+        }).catch(err => {
+          console.warn("서비스 워커 상태 복원 에러:", err);
+        });
       }
     }
   }, []);
