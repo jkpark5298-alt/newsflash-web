@@ -46,7 +46,7 @@ export async function GET() {
 
   return NextResponse.json({
     count: subs.length,
-    vapidPublicKey: vapidPublicKey || "BEl62vD7sO-p_U7t-hR9x_JmO7z8v9q4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l8m9n0o1"
+    vapidPublicKey: vapidPublicKey || "BEz2zU5aC4Y9I3db36cbfDTs9NIGU-MO519Z1uZ9otB6iVASbye7t2DRoAtyxDr_RboLiCafBwvhuJE16VuZRyA"
   });
 }
 
