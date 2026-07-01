@@ -2,20 +2,52 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const SUBSCRIPTIONS_FILE = path.join(DATA_DIR, "subscriptions.json");
+import os from "os";
+
+// 환경에 따른 동적 경로 탐색 (Vercel Serverless 등 읽기 전용 대응)
+function getStoragePaths() {
+  const localDir = path.join(process.cwd(), "data");
+  try {
+    // 1. 로컬 디렉토리 테스트
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    const testFile = path.join(localDir, ".write-test");
+    fs.writeFileSync(testFile, "test");
+    fs.unlinkSync(testFile);
+    return {
+      dir: localDir,
+      subscriptions: path.join(localDir, "subscriptions.json"),
+      vapidKeys: path.join(localDir, "vapid-keys.json"),
+    };
+  } catch (e) {
+    // 2. 읽기 전용인 경우 OS 임시 디렉토리(/tmp 등)로 폴백
+    const tmpDir = os.tmpdir();
+    return {
+      dir: tmpDir,
+      subscriptions: path.join(tmpDir, "subscriptions.json"),
+      vapidKeys: path.join(tmpDir, "vapid-keys.json"),
+    };
+  }
+}
+
+const paths = getStoragePaths();
 
 // 로컬 파일 DB 안전 조회/생성 헬퍼
 function getSubscriptions(): any[] {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(paths.dir)) {
+    fs.mkdirSync(paths.dir, { recursive: true });
   }
-  if (!fs.existsSync(SUBSCRIPTIONS_FILE)) {
-    fs.writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify([]));
+  if (!fs.existsSync(paths.subscriptions)) {
+    try {
+      fs.writeFileSync(paths.subscriptions, JSON.stringify([]));
+    } catch (e) {
+      console.error("구독 파일 초기화 실패:", e);
+    }
     return [];
   }
   try {
-    const content = fs.readFileSync(SUBSCRIPTIONS_FILE, "utf-8");
+    const content = fs.readFileSync(paths.subscriptions, "utf-8");
     return JSON.parse(content || "[]");
   } catch (e) {
     console.error("구독 정보 파싱 에러:", e);
@@ -25,16 +57,16 @@ function getSubscriptions(): any[] {
 
 // 로컬 파일 DB 저장 헬퍼
 function saveSubscriptions(subscriptions: any[]) {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(paths.dir)) {
+    fs.mkdirSync(paths.dir, { recursive: true });
   }
-  fs.writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify(subscriptions, null, 2), "utf-8");
+  fs.writeFileSync(paths.subscriptions, JSON.stringify(subscriptions, null, 2), "utf-8");
 }
 
 export async function GET() {
   const subs = getSubscriptions();
   
-  const keysPath = path.join(DATA_DIR, "vapid-keys.json");
+  const keysPath = paths.vapidKeys;
   let vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || "";
   
   if (!vapidPublicKey && fs.existsSync(keysPath)) {

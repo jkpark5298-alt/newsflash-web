@@ -2,8 +2,36 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const SUBSCRIPTIONS_FILE = path.join(DATA_DIR, "subscriptions.json");
+import os from "os";
+
+// 환경에 따른 동적 경로 탐색 (Vercel Serverless 등 읽기 전용 대응)
+function getStoragePaths() {
+  const localDir = path.join(process.cwd(), "data");
+  try {
+    // 1. 로컬 디렉토리 테스트
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    const testFile = path.join(localDir, ".write-test");
+    fs.writeFileSync(testFile, "test");
+    fs.unlinkSync(testFile);
+    return {
+      dir: localDir,
+      subscriptions: path.join(localDir, "subscriptions.json"),
+      vapidKeys: path.join(localDir, "vapid-keys.json"),
+    };
+  } catch (e) {
+    // 2. 읽기 전용인 경우 OS 임시 디렉토리(/tmp 등)로 폴백
+    const tmpDir = os.tmpdir();
+    return {
+      dir: tmpDir,
+      subscriptions: path.join(tmpDir, "subscriptions.json"),
+      vapidKeys: path.join(tmpDir, "vapid-keys.json"),
+    };
+  }
+}
+
+const paths = getStoragePaths();
 
 // 동적으로 임메모리 VAPID 키 유지 헬퍼
 let cachedVapidKeys: { publicKey: string; privateKey: string } | null = null;
@@ -19,7 +47,7 @@ function getVapidKeys() {
     return cachedVapidKeys;
   }
 
-  const keysPath = path.join(DATA_DIR, "vapid-keys.json");
+  const keysPath = paths.vapidKeys;
   if (fs.existsSync(keysPath)) {
     try {
       cachedVapidKeys = JSON.parse(fs.readFileSync(keysPath, "utf-8"));
@@ -34,8 +62,8 @@ function getVapidKeys() {
   };
 
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(paths.dir)) {
+      fs.mkdirSync(paths.dir, { recursive: true });
     }
     fs.writeFileSync(keysPath, JSON.stringify(cachedVapidKeys, null, 2), "utf-8");
   } catch (err) {}
@@ -44,9 +72,9 @@ function getVapidKeys() {
 }
 
 function getSubscriptions(): any[] {
-  if (!fs.existsSync(SUBSCRIPTIONS_FILE)) return [];
+  if (!fs.existsSync(paths.subscriptions)) return [];
   try {
-    return JSON.parse(fs.readFileSync(SUBSCRIPTIONS_FILE, "utf-8") || "[]");
+    return JSON.parse(fs.readFileSync(paths.subscriptions, "utf-8") || "[]");
   } catch (e) {
     return [];
   }
@@ -54,7 +82,10 @@ function getSubscriptions(): any[] {
 
 function saveSubscriptions(subscriptions: any[]) {
   try {
-    fs.writeFileSync(SUBSCRIPTIONS_FILE, JSON.stringify(subscriptions, null, 2), "utf-8");
+    if (!fs.existsSync(paths.dir)) {
+      fs.mkdirSync(paths.dir, { recursive: true });
+    }
+    fs.writeFileSync(paths.subscriptions, JSON.stringify(subscriptions, null, 2), "utf-8");
   } catch (e) {
     console.error("구독 파일 갱신 에러:", e);
   }

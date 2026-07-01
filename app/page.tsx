@@ -837,7 +837,7 @@ export default function Home() {
       }
 
       // 4. 구독 정보를 서버에 저장
-      await fetch("/api/push-subscriptions", {
+      const saveRes = await fetch("/api/push-subscriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -846,9 +846,15 @@ export default function Home() {
         }),
       });
 
+      if (!saveRes.ok) {
+        const errData = await saveRes.json().catch(() => ({}));
+        throw new Error(errData.error || `서버 저장 실패 (상태 코드: ${saveRes.status})`);
+      }
+
       console.log("백그라운드 웹 푸시 구독이 안전하게 백엔드에 연동되었습니다.");
     } catch (e) {
       console.error("백그라운드 웹 푸시 연동 실패:", e);
+      alert("백그라운드 알림 연동 실패: " + (e instanceof Error ? e.message : String(e)));
     }
   };
 
