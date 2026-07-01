@@ -1406,8 +1406,8 @@ export default function Home() {
       const timeStr = `${hours}:${minutes}`;
       const dateStr = `${year}-${month}-${date}`;
 
-      // 1. 정기 뉴스 알림 (07, 09, 12, 14, 16, 18, 20, 22시 정각)
-      const newsHours = ["07:00", "09:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"];
+      // 1. 정기 뉴스 알림 (07:00 ~ 23:00 매시간 정각)
+      const newsHours = ["07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
       if (newsHours.includes(timeStr)) {
         const alertKey = `${dateStr}-${timeStr}-news`;
         if (!sentScheduledAlertsRef.current.has(alertKey) && breakingNews.length > 0) {
@@ -2783,7 +2783,7 @@ export default function Home() {
                         <span>정기 시간대 뉴스 및 주가지수 알림</span>
                       </h3>
                       <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                        · <b>뉴스 5선</b>: 매일 07, 09, 12, 14, 16, 18, 20, 22시 정각에 최신 뉴스 5개 요약 알림<br/>
+                        · <b>뉴스 5선</b>: 매일 07:00 ~ 23:00까지 매시간 정각에 최신 뉴스 5개 요약 알림<br/>
                         · <b>주가지수</b>: 07시(전일 KOSPI & 미 증시 지수), 12시/16시(현재 KOSPI, KOSDAQ 지수) 알림
                       </p>
                     </div>
