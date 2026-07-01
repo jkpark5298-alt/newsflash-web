@@ -211,6 +211,8 @@ export async function GET(request: Request) {
 
     const subscriptions = getSubscriptions();
     let failedEndpoints: string[] = [];
+    let sentCount = 0;
+    let errorsList: any[] = [];
 
     // 전송 루프 실행
     for (const sub of subscriptions) {
@@ -229,8 +231,14 @@ export async function GET(request: Request) {
             },
             payload
           );
+          sentCount++;
         } catch (error: any) {
           console.error(`푸시 전송 실패 (${sub.endpoint}):`, error);
+          errorsList.push({
+            endpoint: sub.endpoint.substring(0, 40) + "...", // endpoint 일부만 로깅
+            statusCode: error.statusCode,
+            message: error.message,
+          });
           // 410 Gone / 404 Not Found 는 만료된 구독이므로 삭제 리스트에 누적
           if (error.statusCode === 410 || error.statusCode === 404) {
             failedEndpoints.push(sub.endpoint);
@@ -247,9 +255,10 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      sentCount: subscriptions.length - failedEndpoints.length,
+      sentCount,
       failedCleanedCount: failedEndpoints.length,
       notificationsSent: notificationsToSend.map(n => n.title),
+      errors: errorsList.length > 0 ? errorsList : undefined,
     });
   } catch (error: any) {
     console.error("정기 푸시 API 글로벌 에러:", error);
