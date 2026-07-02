@@ -55,15 +55,36 @@ const FALLBACK_VAPID: VapidKeys = {
   privateKey: "CywyVvP9ZCWyqIqvYeR8UPmWTTwjh5YlihITsSTadq4",
 };
 
+function getBlobToken(): string | undefined {
+  return (
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    process.env.VERCEL_BLOB_READ_WRITE_TOKEN ||
+    undefined
+  );
+}
+
 function useBlobStorage() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return Boolean(getBlobToken());
+}
+
+function isVercelRuntime() {
+  return process.env.VERCEL === "1";
+}
+
+function getBlobClientOptions() {
+  const token = getBlobToken();
+  return token ? { token } : undefined;
 }
 
 async function readBlobJson<T>(blobPath: string, fallback: T): Promise<T> {
   if (!useBlobStorage()) return fallback;
 
   try {
-    const { blobs } = await list({ prefix: blobPath, limit: 1 });
+    const { blobs } = await list({
+      prefix: blobPath,
+      limit: 1,
+      ...getBlobClientOptions(),
+    });
     const blob = blobs.find((item) => item.pathname === blobPath) ?? blobs[0];
     if (!blob?.url) return fallback;
 
@@ -77,7 +98,21 @@ async function readBlobJson<T>(blobPath: string, fallback: T): Promise<T> {
 }
 
 async function writeBlobJson(blobPath: string, data: unknown) {
-  if (!useBlobStorage()) return;
+  if (!useBlobStorage()) {
+    if (isVercelRuntime()) {
+      throw new Error(
+        "Vercel Blob이 연결되지 않았습니다. BLOB_READ_WRITE_TOKEN 환경 변수를 확인하고 Redeploy하세요.",
+      );
+    }
+    return;
+  }
+
+  const token = getBlobToken();
+  if (!token) {
+    throw new Error(
+      "BLOB_READ_WRITE_TOKEN이 없습니다. Vercel Storage에서 Blob을 프로젝트에 연결하세요.",
+    );
+  }
 
   try {
     await put(blobPath, JSON.stringify(data, null, 2), {
@@ -85,6 +120,7 @@ async function writeBlobJson(blobPath: string, data: unknown) {
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: "application/json",
+      token,
     });
   } catch (error) {
     console.error(`Blob 쓰기 실패 (${blobPath}):`, error);
@@ -153,6 +189,12 @@ export function getVapidPublicKey(): string {
 export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
   if (useBlobStorage()) {
     return readBlobJson<PushSubscriptionRecord[]>(SUBSCRIPTIONS_BLOB_PATH, []);
+  }
+  if (isVercelRuntime()) {
+    console.warn(
+      "Vercel에서 Blob 없이 구독을 조회했습니다. BLOB_READ_WRITE_TOKEN 연결 후 Redeploy하세요.",
+    );
+    return [];
   }
   return readFileJson<PushSubscriptionRecord[]>(paths.subscriptions, []);
 }
@@ -290,8 +332,16 @@ export function isCronAuthorized(request: Request): boolean {
 }
 
 export function getPushStorageInfo() {
+  const blobTokenPresent = Boolean(getBlobToken());
+  const blobStoreIdPresent = Boolean(process.env.BLOB_STORE_ID);
+
   return {
-    storage: useBlobStorage() ? "vercel-blob" : "local-file",
-    blobConfigured: useBlobStorage(),
+    storage:
+      blobTokenPresent || (isVercelRuntime() && blobStoreIdPresent)
+        ? "vercel-blob"
+        : "local-file",
+    blobConfigured: blobTokenPresent,
+    blobStoreIdPresent,
+    isVercel: isVercelRuntime(),
   };
 }

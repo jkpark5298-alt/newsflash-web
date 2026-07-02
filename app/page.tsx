@@ -802,6 +802,42 @@ export default function Home() {
     return outputArray;
   };
 
+  const isIosStandalonePwa = () => {
+    if (typeof window === "undefined") return false;
+    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      ("standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
+    return isIos && isStandalone;
+  };
+
+  const serializePushSubscription = (subscription: PushSubscription) => {
+    if (typeof subscription.toJSON === "function") {
+      return subscription.toJSON();
+    }
+
+    const p256dh = subscription.getKey("p256dh");
+    const auth = subscription.getKey("auth");
+    if (!p256dh || !auth) {
+      throw new Error("푸시 구독 키 정보가 없습니다.");
+    }
+
+    const encodeKey = (buffer: ArrayBuffer) =>
+      btoa(String.fromCharCode(...new Uint8Array(buffer)))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+
+    return {
+      endpoint: subscription.endpoint,
+      expirationTime: subscription.expirationTime,
+      keys: {
+        p256dh: encodeKey(p256dh),
+        auth: encodeKey(auth),
+      },
+    };
+  };
+
   const syncPushPreferences = async (subscription?: PushSubscription | null) => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
@@ -828,10 +864,19 @@ export default function Home() {
   };
 
   // 백엔드 백그라운드 웹 푸시 알림 등록
-  const enablePushNotification = async (requestPermission = true) => {
+  const enablePushNotification = async (requestPermission = true, forceResubscribe = false) => {
     if (typeof window === "undefined") return false;
     if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
       console.warn("이 브라우저는 백그라운드 웹 푸시 알림을 지원하지 않습니다.");
+      alert("이 브라우저/실행 방식에서는 백그라운드 푸시를 지원하지 않습니다.");
+      return false;
+    }
+
+    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isIos && !isIosStandalonePwa()) {
+      alert(
+        "iPhone에서는 Safari 탭이 아니라 홈 화면에 추가한 NewsFlash 앱(PWA)에서 '설정 저장'을 눌러야 푸시 구독(count)이 등록됩니다.",
+      );
       return false;
     }
 
@@ -841,6 +886,7 @@ export default function Home() {
       permission = await Notification.requestPermission();
       setNotificationPermission(permission);
       if (permission !== "granted") {
+        alert("알림 권한이 허용되지 않았습니다. iPhone 설정 → 알림 → NewsFlash에서 허용해 주세요.");
         return false;
       }
     }
@@ -849,13 +895,19 @@ export default function Home() {
       await navigator.serviceWorker.register("/sw.js");
       const registration = await navigator.serviceWorker.ready;
 
+      const keyRes = await fetch("/api/push-subscriptions");
+      if (!keyRes.ok) throw new Error("VAPID 키 조회 실패");
+      const { vapidPublicKey } = await keyRes.json();
+      if (!vapidPublicKey) throw new Error("VAPID 공개키가 비어 있습니다.");
+
       let subscription = await registration.pushManager.getSubscription();
 
-      if (!subscription) {
-        const res = await fetch("/api/push-subscriptions");
-        if (!res.ok) throw new Error("VAPID 키 조회 실패");
-        const { vapidPublicKey } = await res.json();
+      if (forceResubscribe && subscription) {
+        await subscription.unsubscribe();
+        subscription = null;
+      }
 
+      if (!subscription) {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
@@ -866,7 +918,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          subscription,
+          subscription: serializePushSubscription(subscription),
           userAgent: navigator.userAgent,
           alertEnabled,
           scheduledAlertEnabled,
@@ -879,8 +931,9 @@ export default function Home() {
         throw new Error(errData.error || `서버 저장 실패 (상태 코드: ${saveRes.status})`);
       }
 
+      const saveData = await saveRes.json().catch(() => ({}));
       await syncPushPreferences(subscription);
-      console.log("백그라운드 웹 푸시 구독이 안전하게 백엔드에 연동되었습니다.");
+      console.log("백그라운드 웹 푸시 구독이 안전하게 백엔드에 연동되었습니다.", saveData);
       return true;
     } catch (e) {
       console.error("백그라운드 웹 푸시 연동 실패:", e);
@@ -983,7 +1036,7 @@ export default function Home() {
     }
 
     if (nextState) {
-      enablePushNotification().catch(console.error);
+      enablePushNotification(true, true).catch(console.error);
     } else if (!alertEnabled) {
       disablePushNotification().catch(console.error);
     }
@@ -1137,13 +1190,13 @@ export default function Home() {
       window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, JSON.stringify(scheduledAlertEnabled));
 
       if (alertEnabled || scheduledAlertEnabled) {
-        const registered = await enablePushNotification();
+        const registered = await enablePushNotification(true, true);
         if (registered) {
-          alert("알림 설정이 저장되었고 백그라운드 푸시 구독이 연동되었습니다.");
+          alert("알림 설정이 저장되었고 백그라운드 푸시 구독이 연동되었습니다. /api/push-subscriptions 에서 count:1을 확인하세요.");
         } else if (Notification.permission !== "granted") {
-          alert("알림 설정은 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.");
+          alert("알림 설정은 저장되었으나, 알림 권한이 허용되지 않았습니다. iPhone 설정 → 알림 → NewsFlash에서 확인바랍니다.");
         } else {
-          alert("알림 설정이 저장되었습니다.");
+          alert("알림 설정은 저장되었으나, 서버 구독(count) 등록에 실패했습니다. iPhone 홈 화면 PWA에서 다시 '설정 저장'을 눌러주세요.");
         }
         return;
       }
@@ -1161,7 +1214,7 @@ export default function Home() {
     setAlertEnabled(nextState);
 
     if (nextState) {
-      enablePushNotification().catch(console.error);
+      enablePushNotification(true, true).catch(console.error);
     } else if (!scheduledAlertEnabled) {
       disablePushNotification().catch(console.error);
     }
