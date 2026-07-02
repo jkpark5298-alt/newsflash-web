@@ -802,30 +802,56 @@ export default function Home() {
     return outputArray;
   };
 
-  // 백엔드 백그라운드 웹 푸시 알림 등록
-  const enablePushNotification = async () => {
+  const syncPushPreferences = async (subscription?: PushSubscription | null) => {
     if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const activeSubscription =
+        subscription ?? (await registration.pushManager.getSubscription());
+      if (!activeSubscription) return;
+
+      await fetch("/api/push-preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: activeSubscription.endpoint,
+          alertEnabled,
+          scheduledAlertEnabled,
+          alertKeywords,
+        }),
+      });
+    } catch (e) {
+      console.error("알림 설정 서버 동기화 실패:", e);
+    }
+  };
+
+  // 백엔드 백그라운드 웹 푸시 알림 등록
+  const enablePushNotification = async (requestPermission = true) => {
+    if (typeof window === "undefined") return false;
     if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
       console.warn("이 브라우저는 백그라운드 웹 푸시 알림을 지원하지 않습니다.");
-      return;
+      return false;
     }
 
-    const permission = await Notification.requestPermission();
-    setNotificationPermission(permission);
+    let permission = Notification.permission;
     if (permission !== "granted") {
-      return;
+      if (!requestPermission) return false;
+      permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission !== "granted") {
+        return false;
+      }
     }
 
     try {
-      // 1. 서비스 워커 등록
       await navigator.serviceWorker.register("/sw.js");
       const registration = await navigator.serviceWorker.ready;
 
-      // 2. 이미 존재하는 구독 정보 확인
       let subscription = await registration.pushManager.getSubscription();
 
       if (!subscription) {
-        // 3. 백엔드에서 VAPID Public Key를 동적으로 받아와 구독 신청
         const res = await fetch("/api/push-subscriptions");
         if (!res.ok) throw new Error("VAPID 키 조회 실패");
         const { vapidPublicKey } = await res.json();
@@ -836,13 +862,15 @@ export default function Home() {
         });
       }
 
-      // 4. 구독 정보를 서버에 저장
       const saveRes = await fetch("/api/push-subscriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           subscription,
           userAgent: navigator.userAgent,
+          alertEnabled,
+          scheduledAlertEnabled,
+          alertKeywords,
         }),
       });
 
@@ -851,10 +879,13 @@ export default function Home() {
         throw new Error(errData.error || `서버 저장 실패 (상태 코드: ${saveRes.status})`);
       }
 
+      await syncPushPreferences(subscription);
       console.log("백그라운드 웹 푸시 구독이 안전하게 백엔드에 연동되었습니다.");
+      return true;
     } catch (e) {
       console.error("백그라운드 웹 푸시 연동 실패:", e);
       alert("백그라운드 알림 연동 실패: " + (e instanceof Error ? e.message : String(e)));
+      return false;
     }
   };
 
@@ -912,25 +943,35 @@ export default function Home() {
         setNotificationPermission(Notification.permission);
       }
 
-      // 실제 OS 레벨 백그라운드 푸시 구독 유무를 체크하여 강제 자동 복원 (iOS PWA 로컬스토리지 누락 우회)
       if ("serviceWorker" in navigator && "PushManager" in window) {
-        navigator.serviceWorker.ready.then((registration) => {
-          return registration.pushManager.getSubscription();
-        }).then((subscription) => {
-          if (subscription) {
-            setAlertEnabled(true);
-            setScheduledAlertEnabled(true);
-            try {
-              window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, "true");
-              window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, "true");
-            } catch (e) {}
-          }
-        }).catch(err => {
-          console.warn("서비스 워커 상태 복원 에러:", err);
-        });
+        navigator.serviceWorker
+          .register("/sw.js")
+          .then(() => navigator.serviceWorker.ready)
+          .then((registration) => registration.pushManager.getSubscription())
+          .then((subscription) => {
+            if (subscription) {
+              setAlertEnabled(true);
+              setScheduledAlertEnabled(true);
+              try {
+                window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, "true");
+                window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, "true");
+              } catch (e) {}
+            }
+          })
+          .catch((err) => {
+            console.warn("서비스 워커 상태 복원 에러:", err);
+          });
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!alertEnabled && !scheduledAlertEnabled) return;
+    if (Notification.permission !== "granted") return;
+
+    enablePushNotification(false).catch(console.error);
+  }, [alertEnabled, scheduledAlertEnabled]);
 
   const toggleScheduledAlertEnabled = () => {
     const nextState = !scheduledAlertEnabled;
@@ -1089,24 +1130,26 @@ export default function Home() {
     }
   };
 
-  const saveKeywordSettings = () => {
+  const saveKeywordSettings = async () => {
     try {
       window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
       window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(alertEnabled));
       window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, JSON.stringify(scheduledAlertEnabled));
 
-      if ((alertEnabled || scheduledAlertEnabled) && Notification.permission !== "granted") {
-        Notification.requestPermission().then((permission) => {
-          setNotificationPermission(permission);
-          if (permission === "granted") {
-            alert("알림 설정이 저장되었으며 알림 권한이 허용되었습니다.");
-          } else {
-            alert("알림 설정이 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.");
-          }
-        });
-      } else {
-        alert("알림 설정이 정상적으로 저장되었습니다.");
+      if (alertEnabled || scheduledAlertEnabled) {
+        const registered = await enablePushNotification();
+        if (registered) {
+          alert("알림 설정이 저장되었고 백그라운드 푸시 구독이 연동되었습니다.");
+        } else if (Notification.permission !== "granted") {
+          alert("알림 설정은 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.");
+        } else {
+          alert("알림 설정이 저장되었습니다.");
+        }
+        return;
       }
+
+      await syncPushPreferences();
+      alert("알림 설정이 정상적으로 저장되었습니다.");
     } catch (err) {
       console.error("알림 설정 저장 오류:", err);
       alert("설정을 저장하는데 오류가 발생했습니다.");
@@ -1404,18 +1447,21 @@ export default function Home() {
       if (!scheduledAlertEnabled || Notification.permission !== "granted") return;
 
       const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, "0");
-      const date = String(now.getDate()).padStart(2, "0");
-      const hours = String(now.getHours()).padStart(2, "0");
-      const minutes = String(now.getMinutes()).padStart(2, "0");
-      const timeStr = `${hours}:${minutes}`;
+      const kstOffset = 9 * 60 * 60 * 1000;
+      const kstDate = new Date(now.getTime() + kstOffset);
+      const year = kstDate.getUTCFullYear();
+      const month = String(kstDate.getUTCMonth() + 1).padStart(2, "0");
+      const date = String(kstDate.getUTCDate()).padStart(2, "0");
+      const hours = String(kstDate.getUTCHours()).padStart(2, "0");
+      const minutes = kstDate.getUTCMinutes();
+      const timeStr = `${hours}:${String(minutes).padStart(2, "0")}`;
       const dateStr = `${year}-${month}-${date}`;
+      const hourSlot = `${hours}:00`;
 
-      // 1. 정기 뉴스 알림 (07:00 ~ 23:00 매시간 정각)
+      // 1. 정기 뉴스 알림 (07:00 ~ 23:00, KST 해당 시간대 1회)
       const newsHours = ["07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
-      if (newsHours.includes(timeStr)) {
-        const alertKey = `${dateStr}-${timeStr}-news`;
+      if (newsHours.includes(hourSlot)) {
+        const alertKey = `${dateStr}-${hourSlot}-news`;
         if (!sentScheduledAlertsRef.current.has(alertKey) && breakingNews.length > 0) {
           sentScheduledAlertsRef.current.add(alertKey);
           
@@ -1441,15 +1487,15 @@ export default function Home() {
 
       // 2. 정기 주가지수 알림 (07:00, 12:00, 16:00 정각)
       const stockHours = ["07:00", "12:00", "16:00"];
-      if (stockHours.includes(timeStr)) {
-        const alertKey = `${dateStr}-${timeStr}-stock`;
+      if (stockHours.includes(hourSlot)) {
+        const alertKey = `${dateStr}-${hourSlot}-stock`;
         if (!sentScheduledAlertsRef.current.has(alertKey)) {
           sentScheduledAlertsRef.current.add(alertKey);
 
           let title = "";
           let body = "";
 
-          if (timeStr === "07:00") {
+          if (timeStr === "07:00" || hourSlot === "07:00") {
             title = `📊 [아침 증시 알림] 전일 KOSPI 및 미 증시 현황`;
             const kospiCard = koreanMarketCards.find(c => c.label.toUpperCase() === "KOSPI");
             const dowCard = usMarketCards.find(c => c.label.toUpperCase() === "DOW");
@@ -2790,7 +2836,8 @@ export default function Home() {
                       </h3>
                       <p className="text-xs text-gray-500 mt-1 leading-relaxed">
                         · <b>뉴스 5선</b>: 매일 07:00 ~ 23:00까지 매시간 정각에 최신 뉴스 5개 요약 알림<br/>
-                        · <b>주가지수</b>: 07시(전일 KOSPI & 미 증시 지수), 12시/16시(현재 KOSPI, KOSDAQ 지수) 알림
+                        · <b>주가지수</b>: 07시(전일 KOSPI & 미 증시 지수), 12시/16시(현재 KOSPI, KOSDAQ 지수) 알림<br/>
+                        · <b>iPhone</b>: Safari에서 <b>홈 화면에 추가한 PWA</b>에서만 백그라운드 푸시가 옵니다.
                       </p>
                     </div>
                     <button

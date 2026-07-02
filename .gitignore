@@ -44,3 +44,6 @@ next-env.d.ts
 
 .vercel
 .env*.local
+
+# local push subscription data (production uses Vercel Blob)
+/data/
