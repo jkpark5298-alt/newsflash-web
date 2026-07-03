@@ -993,12 +993,19 @@ type PushSettings = {
       }
 
       await syncPushPreferences(subscription, effectiveSettings);
-      const latestCount = await refreshPushSubscriptionStatus();
+      setServerSubscriptionCount(savedCount);
+
+      let latestCount = await refreshPushSubscriptionStatus();
+      if (latestCount === null || latestCount < savedCount) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        latestCount = await refreshPushSubscriptionStatus();
+      }
+
       console.log("백그라운드 웹 푸시 구독이 안전하게 백엔드에 연동되었습니다.", saveData);
 
-      if (latestCount === null || latestCount < 1) {
-        throw new Error(
-          `저장 직후 조회 count=${latestCount ?? 0}. Blob 읽기 지연일 수 있으니 잠시 후 다시 확인해 주세요.`,
+      if (latestCount === null || latestCount < savedCount) {
+        setPushConnectionMessage(
+          `서버 저장 완료 (count=${savedCount}). 목록 조회는 잠시 후 반영될 수 있습니다.`,
         );
       }
 

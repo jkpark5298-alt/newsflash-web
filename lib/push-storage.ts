@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { list, put } from "@vercel/blob";
+import { get, list, put } from "@vercel/blob";
 
 export type PushSubscriptionRecord = {
   endpoint: string;
@@ -80,6 +80,22 @@ async function readBlobJson<T>(blobPath: string, fallback: T): Promise<T> {
   if (!useBlobStorage()) return fallback;
 
   const options = getBlobClientOptions();
+
+  try {
+    const result = await get(blobPath, {
+      access: "private",
+      ...options,
+    });
+
+    if (result?.statusCode === 200 && result.stream) {
+      const text = await new Response(result.stream).text();
+      if (text.trim()) {
+        return JSON.parse(text) as T;
+      }
+    }
+  } catch (error) {
+    console.error(`Blob get 실패 (${blobPath}):`, error);
+  }
 
   try {
     const folderPrefix = blobPath.includes("/")
