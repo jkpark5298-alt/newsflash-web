@@ -655,12 +655,20 @@ export default function Home() {
   const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
   const [isEconomyNewsExpanded, setIsEconomyNewsExpanded] = useState(false);
 
-  // --- Notification & Keyword Alert Settings State & Logic ---
+type PushSettings = {
+  alertEnabled: boolean;
+  scheduledAlertEnabled: boolean;
+  alertKeywords: string[];
+};
+
   const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
   const [alertEnabled, setAlertEnabled] = useState<boolean>(false);
   const [scheduledAlertEnabled, setScheduledAlertEnabled] = useState<boolean>(false);
 
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
+  const [serverSubscriptionCount, setServerSubscriptionCount] = useState<number | null>(null);
+  const [pushConnectionMessage, setPushConnectionMessage] = useState<string>("");
+  const [isConnectingPush, setIsConnectingPush] = useState(false);
   const [keywordInput, setKeywordInput] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [recentScheduledNews, setRecentScheduledNews] = useState<ScheduledNewsAlertItem | null>(() => {
@@ -807,8 +815,36 @@ export default function Home() {
     const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
     const isStandalone =
       window.matchMedia("(display-mode: standalone)").matches ||
+      window.matchMedia("(display-mode: fullscreen)").matches ||
       ("standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
     return isIos && isStandalone;
+  };
+
+  const getPushEnvironmentLabel = () => {
+    if (typeof window === "undefined") return "확인 불가";
+    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (!isIos) return "iPhone 아님";
+    return isIosStandalonePwa() ? "iPhone PWA (홈 화면)" : "Safari 탭 (푸시 불가)";
+  };
+
+  const getCurrentPushSettings = (overrides?: Partial<PushSettings>): PushSettings => ({
+    alertEnabled: overrides?.alertEnabled ?? alertEnabled,
+    scheduledAlertEnabled: overrides?.scheduledAlertEnabled ?? scheduledAlertEnabled,
+    alertKeywords: overrides?.alertKeywords ?? alertKeywords,
+  });
+
+  const refreshPushSubscriptionStatus = async () => {
+    try {
+      const res = await fetch("/api/push-subscriptions", { cache: "no-store" });
+      if (!res.ok) throw new Error(`구독 상태 조회 실패 (${res.status})`);
+      const data = await res.json();
+      setServerSubscriptionCount(typeof data.count === "number" ? data.count : 0);
+      return typeof data.count === "number" ? data.count : 0;
+    } catch (error) {
+      console.error("구독 상태 조회 에러:", error);
+      setServerSubscriptionCount(null);
+      return null;
+    }
   };
 
   const serializePushSubscription = (subscription: PushSubscription) => {
@@ -838,9 +874,14 @@ export default function Home() {
     };
   };
 
-  const syncPushPreferences = async (subscription?: PushSubscription | null) => {
+  const syncPushPreferences = async (
+    subscription?: PushSubscription | null,
+    settings?: PushSettings,
+  ) => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+
+    const effectiveSettings = settings ?? getCurrentPushSettings();
 
     try {
       const registration = await navigator.serviceWorker.ready;
@@ -853,9 +894,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           endpoint: activeSubscription.endpoint,
-          alertEnabled,
-          scheduledAlertEnabled,
-          alertKeywords,
+          alertEnabled: effectiveSettings.alertEnabled,
+          scheduledAlertEnabled: effectiveSettings.scheduledAlertEnabled,
+          alertKeywords: effectiveSettings.alertKeywords,
         }),
       });
     } catch (e) {
@@ -864,7 +905,11 @@ export default function Home() {
   };
 
   // 백엔드 백그라운드 웹 푸시 알림 등록
-  const enablePushNotification = async (requestPermission = true, forceResubscribe = false) => {
+  const enablePushNotification = async (
+    requestPermission = true,
+    forceResubscribe = false,
+    settingsOverride?: Partial<PushSettings>,
+  ) => {
     if (typeof window === "undefined") return false;
     if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
       console.warn("이 브라우저는 백그라운드 웹 푸시 알림을 지원하지 않습니다.");
@@ -891,6 +936,8 @@ export default function Home() {
       }
     }
 
+    const effectiveSettings = getCurrentPushSettings(settingsOverride);
+
     try {
       await navigator.serviceWorker.register("/sw.js");
       const registration = await navigator.serviceWorker.ready;
@@ -914,15 +961,20 @@ export default function Home() {
         });
       }
 
+      const serializedSubscription = serializePushSubscription(subscription);
+      if (!serializedSubscription.keys?.p256dh || !serializedSubscription.keys?.auth) {
+        throw new Error("iPhone 구독 키 생성에 실패했습니다. PWA를 삭제 후 홈 화면에 다시 추가해 주세요.");
+      }
+
       const saveRes = await fetch("/api/push-subscriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          subscription: serializePushSubscription(subscription),
+          subscription: serializedSubscription,
           userAgent: navigator.userAgent,
-          alertEnabled,
-          scheduledAlertEnabled,
-          alertKeywords,
+          alertEnabled: effectiveSettings.alertEnabled,
+          scheduledAlertEnabled: effectiveSettings.scheduledAlertEnabled,
+          alertKeywords: effectiveSettings.alertKeywords,
         }),
       });
 
@@ -932,13 +984,78 @@ export default function Home() {
       }
 
       const saveData = await saveRes.json().catch(() => ({}));
-      await syncPushPreferences(subscription);
+      const savedCount =
+        typeof saveData.count === "number" ? saveData.count : null;
+      if (savedCount === null || savedCount < 1) {
+        throw new Error(
+          `서버 저장 응답 count가 0입니다. storage=${JSON.stringify(saveData.storage ?? null)}`,
+        );
+      }
+
+      await syncPushPreferences(subscription, effectiveSettings);
+      const latestCount = await refreshPushSubscriptionStatus();
       console.log("백그라운드 웹 푸시 구독이 안전하게 백엔드에 연동되었습니다.", saveData);
+
+      if (latestCount === null || latestCount < 1) {
+        throw new Error(
+          `저장 직후 조회 count=${latestCount ?? 0}. Blob 읽기 지연일 수 있으니 잠시 후 다시 확인해 주세요.`,
+        );
+      }
+
       return true;
     } catch (e) {
       console.error("백그라운드 웹 푸시 연동 실패:", e);
       alert("백그라운드 알림 연동 실패: " + (e instanceof Error ? e.message : String(e)));
       return false;
+    }
+  };
+
+  const connectIphonePush = async () => {
+    setIsConnectingPush(true);
+    setPushConnectionMessage("iPhone 푸시 연결 중...");
+
+    const nextSettings: PushSettings = {
+      alertEnabled: true,
+      scheduledAlertEnabled: true,
+      alertKeywords,
+    };
+
+    setAlertEnabled(true);
+    setScheduledAlertEnabled(true);
+    try {
+      window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, "true");
+      window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, "true");
+      window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
+    } catch (e) {
+      console.error(e);
+    }
+
+    try {
+      const registered = await enablePushNotification(true, true, nextSettings);
+      if (!registered) {
+        setPushConnectionMessage("연결 실패: iPhone PWA에서 다시 시도해 주세요.");
+        return;
+      }
+
+      const testRes = await fetch("/api/send-scheduled-push?force=true&test=true", {
+        cache: "no-store",
+      });
+      const testData = await testRes.json().catch(() => ({}));
+      const sentCount = typeof testData.sentCount === "number" ? testData.sentCount : 0;
+
+      if (sentCount > 0) {
+        setPushConnectionMessage(`연결 완료! 서버 count=1, 테스트 푸시 ${sentCount}건 발송됨.`);
+        alert("iPhone 푸시 연결 완료! 잠시 후 알림 팝업을 확인해 주세요.");
+      } else {
+        setPushConnectionMessage(`서버 count=1 이지만 테스트 발송 sentCount=${sentCount}.`);
+        alert(`구독은 저장됐지만 테스트 발송이 ${sentCount}건입니다. 잠시 후 다시 확인해 주세요.`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPushConnectionMessage(`연결 실패: ${message}`);
+    } finally {
+      setIsConnectingPush(false);
+      await refreshPushSubscriptionStatus();
     }
   };
 
@@ -1019,12 +1136,9 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!alertEnabled && !scheduledAlertEnabled) return;
-    if (Notification.permission !== "granted") return;
-
-    enablePushNotification(false).catch(console.error);
-  }, [alertEnabled, scheduledAlertEnabled]);
+    if (selectedDetailView !== "알림 안내판") return;
+    refreshPushSubscriptionStatus().catch(console.error);
+  }, [selectedDetailView]);
 
   const toggleScheduledAlertEnabled = () => {
     const nextState = !scheduledAlertEnabled;
@@ -1036,7 +1150,11 @@ export default function Home() {
     }
 
     if (nextState) {
-      enablePushNotification(true, true).catch(console.error);
+      enablePushNotification(true, true, {
+        alertEnabled,
+        scheduledAlertEnabled: nextState,
+        alertKeywords,
+      }).catch(console.error);
     } else if (!alertEnabled) {
       disablePushNotification().catch(console.error);
     }
@@ -1190,7 +1308,11 @@ export default function Home() {
       window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, JSON.stringify(scheduledAlertEnabled));
 
       if (alertEnabled || scheduledAlertEnabled) {
-        const registered = await enablePushNotification(true, true);
+        const registered = await enablePushNotification(true, true, {
+          alertEnabled,
+          scheduledAlertEnabled,
+          alertKeywords,
+        });
         if (registered) {
           alert("알림 설정이 저장되었고 백그라운드 푸시 구독이 연동되었습니다. /api/push-subscriptions 에서 count:1을 확인하세요.");
         } else if (Notification.permission !== "granted") {
@@ -1214,7 +1336,11 @@ export default function Home() {
     setAlertEnabled(nextState);
 
     if (nextState) {
-      enablePushNotification(true, true).catch(console.error);
+      enablePushNotification(true, true, {
+        alertEnabled: nextState,
+        scheduledAlertEnabled,
+        alertKeywords,
+      }).catch(console.error);
     } else if (!scheduledAlertEnabled) {
       disablePushNotification().catch(console.error);
     }
@@ -2852,6 +2978,27 @@ export default function Home() {
                       원하는 단어(키워드)를 등록해두시면 관련 속보 기사가 발생할 때 즉시 알림을 보내드립니다.
                     </p>
                   </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-md p-6 mb-5 border border-amber-200 bg-amber-50/40">
+                  <h3 className="font-bold text-gray-900 mb-2">📲 iPhone 푸시 연결 (필수)</h3>
+                  <div className="text-xs text-gray-600 space-y-1 mb-4">
+                    <p>· 실행 환경: <b>{typeof window !== "undefined" ? getPushEnvironmentLabel() : "확인 중"}</b></p>
+                    <p>· 알림 권한: <b>{notificationPermission}</b></p>
+                    <p>· 서버 구독 count: <b>{serverSubscriptionCount ?? "확인 중"}</b> (1이어야 푸시 발송됨)</p>
+                    {pushConnectionMessage ? <p className="text-amber-800">· {pushConnectionMessage}</p> : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => connectIphonePush().catch(console.error)}
+                    disabled={isConnectingPush}
+                    className="w-full md:w-auto px-5 py-3 rounded-xl bg-amber-500 text-white font-bold text-sm hover:bg-amber-600 transition cursor-pointer disabled:opacity-60"
+                  >
+                    {isConnectingPush ? "연결 중..." : "📲 iPhone 푸시 연결 + 테스트 발송"}
+                  </button>
+                  <p className="text-[11px] text-gray-500 mt-3 leading-relaxed">
+                    홈 화면 PWA에서 이 버튼을 누르세요. Safari 탭에서는 count=0으로 남습니다.
+                  </p>
                 </div>
 
                 <div className="bg-white rounded-2xl shadow-md p-6">

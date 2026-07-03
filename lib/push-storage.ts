@@ -79,13 +79,26 @@ function getBlobClientOptions() {
 async function readBlobJson<T>(blobPath: string, fallback: T): Promise<T> {
   if (!useBlobStorage()) return fallback;
 
+  const options = getBlobClientOptions();
+
   try {
-    const { blobs } = await list({
-      prefix: blobPath,
-      limit: 1,
-      ...getBlobClientOptions(),
-    });
-    const blob = blobs.find((item) => item.pathname === blobPath) ?? blobs[0];
+    const folderPrefix = blobPath.includes("/")
+      ? `${blobPath.slice(0, blobPath.lastIndexOf("/") + 1)}`
+      : "";
+
+    const listResults = await Promise.all([
+      list({ prefix: blobPath, limit: 5, ...options }),
+      folderPrefix
+        ? list({ prefix: folderPrefix, limit: 20, ...options })
+        : Promise.resolve({ blobs: [] as Awaited<ReturnType<typeof list>>["blobs"] }),
+    ]);
+
+    const blob =
+      listResults
+        .flatMap((result) => result.blobs)
+        .find((item) => item.pathname === blobPath) ??
+      listResults[0].blobs[0];
+
     if (!blob?.url) return fallback;
 
     const response = await fetch(blob.url, { cache: "no-store" });
@@ -240,6 +253,16 @@ export async function upsertSubscription(
   }
 
   await saveSubscriptions(subscriptions);
+
+  if (useBlobStorage()) {
+    const verified = await getSubscriptions();
+    if (verified.length !== subscriptions.length) {
+      console.warn(
+        `Blob 구독 count 불일치: 저장 ${subscriptions.length}, 조회 ${verified.length}`,
+      );
+    }
+  }
+
   return subscriptions;
 }
 

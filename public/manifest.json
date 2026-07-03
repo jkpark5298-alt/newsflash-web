@@ -3,7 +3,9 @@
   "short_name": "NewsFlash",
   "description": "실시간 뉴스, 속보 및 경제 지표 알림 서비스",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
   "background_color": "#ffffff",
   "theme_color": "#2563eb",
   "icons": [

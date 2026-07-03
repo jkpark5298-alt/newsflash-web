@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  getPushStorageInfo,
   getSubscriptions,
   getVapidPublicKey,
   removeSubscription,
@@ -9,10 +10,18 @@ import {
 export async function GET() {
   const subs = await getSubscriptions();
 
-  return NextResponse.json({
-    count: subs.length,
-    vapidPublicKey: getVapidPublicKey(),
-  });
+  return NextResponse.json(
+    {
+      count: subs.length,
+      vapidPublicKey: getVapidPublicKey(),
+      storage: getPushStorageInfo(),
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, max-age=0",
+      },
+    },
+  );
 }
 
 export async function POST(request: Request) {
@@ -32,6 +41,18 @@ export async function POST(request: Request) {
       );
     }
 
+    const p256dh = subscription.keys?.p256dh;
+    const auth = subscription.keys?.auth;
+    if (!p256dh || !auth || typeof p256dh !== "string" || typeof auth !== "string") {
+      return NextResponse.json(
+        {
+          error:
+            "구독 키(p256dh/auth)가 없습니다. iPhone PWA에서 다시 구독해 주세요.",
+        },
+        { status: 400 },
+      );
+    }
+
     const subscriptions = await upsertSubscription({
       endpoint: subscription.endpoint,
       keys: subscription.keys,
@@ -42,11 +63,16 @@ export async function POST(request: Request) {
       alertKeywords: Array.isArray(alertKeywords) ? alertKeywords : undefined,
     });
 
-    return NextResponse.json({ success: true, count: subscriptions.length });
+    return NextResponse.json({
+      success: true,
+      count: subscriptions.length,
+      storage: getPushStorageInfo(),
+    });
   } catch (error: unknown) {
     console.error("구독 등록 API 에러:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "서버 처리 중 오류가 발생했습니다." },
+      { error: "서버 처리 중 오류가 발생했습니다.", detail: message },
       { status: 500 },
     );
   }
