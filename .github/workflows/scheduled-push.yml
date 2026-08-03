@@ -1,10 +1,13 @@
 name: Scheduled Push Cron
 
 # iPhone 탭이 닫혀 있어도 키워드/정기 푸시가 나가도록
-# /api/send-scheduled-push 를 5분마다 호출합니다.
+# /api/send-scheduled-push 를 주기적으로 호출합니다.
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # 매시 정각(UTC=KST 정각) — 정기 뉴스/증시
+    - cron: "0 * * * *"
+    # 키워드 속보 검사용
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 jobs:
