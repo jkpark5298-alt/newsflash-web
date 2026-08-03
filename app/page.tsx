@@ -667,6 +667,8 @@ type PushSettings = {
 
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const [serverSubscriptionCount, setServerSubscriptionCount] = useState<number | null>(null);
+  const [cronSecretConfigured, setCronSecretConfigured] = useState<boolean | null>(null);
+  const [pushReady, setPushReady] = useState<boolean | null>(null);
   const [pushConnectionMessage, setPushConnectionMessage] = useState<string>("");
   const [isConnectingPush, setIsConnectingPush] = useState(false);
   const [keywordInput, setKeywordInput] = useState("");
@@ -835,11 +837,22 @@ type PushSettings = {
 
   const refreshPushSubscriptionStatus = async () => {
     try {
-      const res = await fetch("/api/push-subscriptions", { cache: "no-store" });
-      if (!res.ok) throw new Error(`구독 상태 조회 실패 (${res.status})`);
-      const data = await res.json();
-      setServerSubscriptionCount(typeof data.count === "number" ? data.count : 0);
-      return typeof data.count === "number" ? data.count : 0;
+      const [subRes, statusRes] = await Promise.all([
+        fetch("/api/push-subscriptions", { cache: "no-store" }),
+        fetch("/api/push-status", { cache: "no-store" }),
+      ]);
+      if (!subRes.ok) throw new Error(`구독 상태 조회 실패 (${subRes.status})`);
+      const data = await subRes.json();
+      const count = typeof data.count === "number" ? data.count : 0;
+      setServerSubscriptionCount(count);
+
+      if (statusRes.ok) {
+        const status = await statusRes.json();
+        setCronSecretConfigured(Boolean(status.cronSecretConfigured));
+        setPushReady(Boolean(status.pushReady));
+      }
+
+      return count;
     } catch (error) {
       console.error("구독 상태 조회 에러:", error);
       setServerSubscriptionCount(null);
@@ -980,7 +993,15 @@ type PushSettings = {
 
       if (!saveRes.ok) {
         const errData = await saveRes.json().catch(() => ({}));
-        throw new Error(errData.error || `서버 저장 실패 (상태 코드: ${saveRes.status})`);
+        const detail =
+          typeof errData.detail === "string" && errData.detail.trim()
+            ? errData.detail
+            : "";
+        throw new Error(
+          detail ||
+            errData.error ||
+            `서버 저장 실패 (상태 코드: ${saveRes.status})`,
+        );
       }
 
       const saveData = await saveRes.json().catch(() => ({}));
@@ -1044,17 +1065,31 @@ type PushSettings = {
         return;
       }
 
+      const latestCount = await refreshPushSubscriptionStatus();
       const testRes = await fetch("/api/send-scheduled-push?force=true&test=true", {
         cache: "no-store",
       });
       const testData = await testRes.json().catch(() => ({}));
       const sentCount = typeof testData.sentCount === "number" ? testData.sentCount : 0;
+      const countLabel = latestCount ?? "?";
+
+      if ((latestCount ?? 0) < 1) {
+        setPushConnectionMessage(
+          `연결 실패: 서버 구독 count=${countLabel}. Blob 저장/조회를 확인해 주세요.`,
+        );
+        alert("서버 구독이 0입니다. 홈 화면 PWA에서 다시 연결해 주세요.");
+        return;
+      }
 
       if (sentCount > 0) {
-        setPushConnectionMessage(`연결 완료! 서버 count=1, 테스트 푸시 ${sentCount}건 발송됨.`);
+        setPushConnectionMessage(
+          `연결 완료! 서버 count=${countLabel}, 테스트 푸시 ${sentCount}건 발송됨.`,
+        );
         alert("iPhone 푸시 연결 완료! 잠시 후 알림 팝업을 확인해 주세요.");
       } else {
-        setPushConnectionMessage(`서버 count=1 이지만 테스트 발송 sentCount=${sentCount}.`);
+        setPushConnectionMessage(
+          `서버 count=${countLabel} 이지만 테스트 발송 sentCount=${sentCount}. ${testData.message || ""}`,
+        );
         alert(`구독은 저장됐지만 테스트 발송이 ${sentCount}건입니다. 잠시 후 다시 확인해 주세요.`);
       }
     } catch (error) {
@@ -2992,7 +3027,37 @@ type PushSettings = {
                   <div className="text-xs text-gray-600 space-y-1 mb-4">
                     <p>· 실행 환경: <b>{typeof window !== "undefined" ? getPushEnvironmentLabel() : "확인 중"}</b></p>
                     <p>· 알림 권한: <b>{notificationPermission}</b></p>
-                    <p>· 서버 구독 count: <b>{serverSubscriptionCount ?? "확인 중"}</b> (1이어야 푸시 발송됨)</p>
+                    <p>· 서버 구독 count: <b>{serverSubscriptionCount ?? "확인 중"}</b> (1 이상이어야 푸시 발송됨)</p>
+                    <p>
+                      · 백그라운드 cron:{" "}
+                      <b>
+                        {cronSecretConfigured === null
+                          ? "확인 중"
+                          : cronSecretConfigured
+                            ? "CRON_SECRET 설정됨 (GitHub Actions 5분 / Vercel 매일 1회)"
+                            : "미설정"}
+                      </b>
+                    </p>
+                    <p>
+                      · 푸시 저장소:{" "}
+                      <b>
+                        {pushReady === null
+                          ? "확인 중"
+                          : pushReady
+                            ? "준비됨"
+                            : "미준비 (Neon/Blob 확인 필요)"}
+                      </b>
+                    </p>
+                    {serverSubscriptionCount === 0 ? (
+                      <p className="text-red-700 font-medium">
+                        · 현재 구독 0건이라 서버 푸시가 발송되지 않습니다. 아래 버튼으로 다시 연결하세요.
+                      </p>
+                    ) : null}
+                    {cronSecretConfigured === false ? (
+                      <p className="text-red-700 font-medium">
+                        · 탭을 닫아도 알림을 받으려면 Vercel에 CRON_SECRET과 cron 스케줄이 필요합니다.
+                      </p>
+                    ) : null}
                     {pushConnectionMessage ? <p className="text-amber-800">· {pushConnectionMessage}</p> : null}
                   </div>
                   <button
@@ -3005,6 +3070,7 @@ type PushSettings = {
                   </button>
                   <p className="text-[11px] text-gray-500 mt-3 leading-relaxed">
                     홈 화면 PWA에서 이 버튼을 누르세요. Safari 탭에서는 count=0으로 남습니다.
+                    연결 후 서버 count가 1 이상이 되어야 정시/키워드 푸시가 나갑니다.
                   </p>
                 </div>
 

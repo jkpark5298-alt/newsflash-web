@@ -12,6 +12,9 @@ import {
   type PushSubscriptionRecord,
 } from "@/lib/push-storage";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 type NotificationPayload = {
   title: string;
   body: string;

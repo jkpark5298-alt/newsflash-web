@@ -1,0 +1,27 @@
+name: Scheduled Push Cron
+
+# iPhone 탭이 닫혀 있어도 키워드/정기 푸시가 나가도록
+# /api/send-scheduled-push 를 5분마다 호출합니다.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  send-scheduled-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Trigger NewsFlash scheduled push
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "GitHub Secrets에 CRON_SECRET이 없습니다. Vercel의 CRON_SECRET과 같은 값을 넣어주세요."
+            exit 1
+          fi
+          curl -fsS -X GET \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "Accept: application/json" \
+            --max-time 55 \
+            "https://newsflash-web-seven.vercel.app/api/send-scheduled-push"

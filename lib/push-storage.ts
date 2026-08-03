@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { neon } from "@neondatabase/serverless";
 import { get, list, put } from "@vercel/blob";
 
 export type PushSubscriptionRecord = {
@@ -15,11 +16,16 @@ export type PushSubscriptionRecord = {
 };
 
 type VapidKeys = { publicKey: string; privateKey: string };
+type BlobAccess = "private" | "public";
 
 const SUBSCRIPTIONS_BLOB_PATH = "push/subscriptions.json";
 const SENT_SLOTS_BLOB_PATH = "push/sent-slots.json";
+const PG_SUBSCRIPTIONS_KEY = "subscriptions";
+const PG_SENT_SLOTS_KEY = "sent-slots";
 
 let cachedVapidKeys: VapidKeys | null = null;
+let pgReady: Promise<void> | null = null;
+let resolvedBlobAccess: BlobAccess | null = null;
 
 function getStoragePaths() {
   const localDir = path.join(process.cwd(), "data");
@@ -55,6 +61,20 @@ const FALLBACK_VAPID: VapidKeys = {
   privateKey: "CywyVvP9ZCWyqIqvYeR8UPmWTTwjh5YlihITsSTadq4",
 };
 
+function getDatabaseUrl(): string | undefined {
+  return (
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    undefined
+  );
+}
+
+function usePostgresStorage() {
+  return Boolean(getDatabaseUrl());
+}
+
 function getBlobToken(): string | undefined {
   return (
     process.env.BLOB_READ_WRITE_TOKEN ||
@@ -64,7 +84,8 @@ function getBlobToken(): string | undefined {
 }
 
 function useBlobStorage() {
-  return Boolean(getBlobToken());
+  // Blob Hobby 한도(정지) 기간에는 Postgres를 우선 사용한다.
+  return !usePostgresStorage() && Boolean(getBlobToken());
 }
 
 function isVercelRuntime() {
@@ -76,28 +97,99 @@ function getBlobClientOptions() {
   return token ? { token } : undefined;
 }
 
+function getSql() {
+  const databaseUrl = getDatabaseUrl();
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL이 없습니다. Neon을 프로젝트에 연결하세요.");
+  }
+  return neon(databaseUrl);
+}
+
+async function ensurePostgresSchema() {
+  if (!pgReady) {
+    pgReady = (async () => {
+      const sql = getSql();
+      await sql`
+        CREATE TABLE IF NOT EXISTS push_kv (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+    })().catch((error) => {
+      pgReady = null;
+      throw error;
+    });
+  }
+  await pgReady;
+}
+
+async function readPostgresJson<T>(key: string, fallback: T): Promise<T> {
+  await ensurePostgresSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT value FROM push_kv WHERE key = ${key} LIMIT 1`;
+  const raw = rows[0]?.value;
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function writePostgresJson(key: string, data: unknown) {
+  await ensurePostgresSchema();
+  const sql = getSql();
+  const payload = JSON.stringify(data);
+  await sql`
+    INSERT INTO push_kv (key, value, updated_at)
+    VALUES (${key}, ${payload}, NOW())
+    ON CONFLICT (key)
+    DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `;
+}
+
+async function readViaGet<T>(
+  blobPath: string,
+  access: BlobAccess,
+): Promise<T | null> {
+  const options = getBlobClientOptions();
+  const result = await get(blobPath, {
+    access,
+    ...options,
+  });
+
+  if (result?.statusCode === 200 && result.stream) {
+    const text = await new Response(result.stream).text();
+    if (text.trim()) {
+      return JSON.parse(text) as T;
+    }
+  }
+
+  return null;
+}
+
 async function readBlobJson<T>(blobPath: string, fallback: T): Promise<T> {
   if (!useBlobStorage()) return fallback;
 
-  const options = getBlobClientOptions();
+  const accessOrder: BlobAccess[] = resolvedBlobAccess
+    ? [resolvedBlobAccess, resolvedBlobAccess === "private" ? "public" : "private"]
+    : ["private", "public"];
 
-  try {
-    const result = await get(blobPath, {
-      access: "private",
-      ...options,
-    });
-
-    if (result?.statusCode === 200 && result.stream) {
-      const text = await new Response(result.stream).text();
-      if (text.trim()) {
-        return JSON.parse(text) as T;
+  for (const access of accessOrder) {
+    try {
+      const parsed = await readViaGet<T>(blobPath, access);
+      if (parsed !== null) {
+        resolvedBlobAccess = access;
+        return parsed;
       }
+    } catch (error) {
+      console.error(`Blob get 실패 (${blobPath}, ${access}):`, error);
     }
-  } catch (error) {
-    console.error(`Blob get 실패 (${blobPath}):`, error);
   }
 
   try {
+    const options = getBlobClientOptions();
     const folderPrefix = blobPath.includes("/")
       ? `${blobPath.slice(0, blobPath.lastIndexOf("/") + 1)}`
       : "";
@@ -119,6 +211,7 @@ async function readBlobJson<T>(blobPath: string, fallback: T): Promise<T> {
 
     const response = await fetch(blob.url, { cache: "no-store" });
     if (!response.ok) return fallback;
+    resolvedBlobAccess = "public";
     return (await response.json()) as T;
   } catch (error) {
     console.error(`Blob 읽기 실패 (${blobPath}):`, error);
@@ -128,9 +221,9 @@ async function readBlobJson<T>(blobPath: string, fallback: T): Promise<T> {
 
 async function writeBlobJson(blobPath: string, data: unknown) {
   if (!useBlobStorage()) {
-    if (isVercelRuntime()) {
+    if (isVercelRuntime() && !usePostgresStorage()) {
       throw new Error(
-        "Vercel Blob이 연결되지 않았습니다. BLOB_READ_WRITE_TOKEN 환경 변수를 확인하고 Redeploy하세요.",
+        "저장소가 없습니다. Neon(DATABASE_URL) 또는 BLOB_READ_WRITE_TOKEN을 연결하세요.",
       );
     }
     return;
@@ -143,18 +236,32 @@ async function writeBlobJson(blobPath: string, data: unknown) {
     );
   }
 
-  try {
-    await put(blobPath, JSON.stringify(data, null, 2), {
-      access: "private",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: "application/json",
-      token,
-    });
-  } catch (error) {
-    console.error(`Blob 쓰기 실패 (${blobPath}):`, error);
-    throw error;
+  const accessOrder: BlobAccess[] = resolvedBlobAccess
+    ? [resolvedBlobAccess, resolvedBlobAccess === "private" ? "public" : "private"]
+    : ["private", "public"];
+
+  let lastError: unknown;
+  for (const access of accessOrder) {
+    try {
+      await put(blobPath, JSON.stringify(data, null, 2), {
+        access,
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: "application/json",
+        cacheControlMaxAge: 60,
+        token,
+      });
+      resolvedBlobAccess = access;
+      return;
+    } catch (error) {
+      lastError = error;
+      console.error(`Blob 쓰기 실패 (${blobPath}, ${access}):`, error);
+    }
   }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Blob 쓰기 실패 (${blobPath})`);
 }
 
 function readFileJson<T>(filePath: string, fallback: T): T {
@@ -216,12 +323,15 @@ export function getVapidPublicKey(): string {
 }
 
 export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
+  if (usePostgresStorage()) {
+    return readPostgresJson<PushSubscriptionRecord[]>(PG_SUBSCRIPTIONS_KEY, []);
+  }
   if (useBlobStorage()) {
     return readBlobJson<PushSubscriptionRecord[]>(SUBSCRIPTIONS_BLOB_PATH, []);
   }
   if (isVercelRuntime()) {
     console.warn(
-      "Vercel에서 Blob 없이 구독을 조회했습니다. BLOB_READ_WRITE_TOKEN 연결 후 Redeploy하세요.",
+      "Vercel에서 구독 저장소가 없습니다. Neon(DATABASE_URL)을 연결하세요.",
     );
     return [];
   }
@@ -231,15 +341,27 @@ export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
 export async function saveSubscriptions(
   subscriptions: PushSubscriptionRecord[],
 ) {
+  if (usePostgresStorage()) {
+    await writePostgresJson(PG_SUBSCRIPTIONS_KEY, subscriptions);
+    return;
+  }
+
   if (useBlobStorage()) {
     await writeBlobJson(SUBSCRIPTIONS_BLOB_PATH, subscriptions);
     return;
+  }
+
+  if (isVercelRuntime()) {
+    throw new Error(
+      "구독 저장소가 없습니다. Neon(DATABASE_URL) 또는 Blob을 연결한 뒤 Redeploy하세요.",
+    );
   }
 
   try {
     writeFileJson(paths.subscriptions, subscriptions);
   } catch (error) {
     console.error("구독 파일 갱신 에러:", error);
+    throw error;
   }
 }
 
@@ -270,13 +392,15 @@ export async function upsertSubscription(
 
   await saveSubscriptions(subscriptions);
 
-  if (useBlobStorage()) {
+  try {
     const verified = await getSubscriptions();
-    if (verified.length !== subscriptions.length) {
+    if (!verified.some((sub) => sub.endpoint === record.endpoint)) {
       console.warn(
-        `Blob 구독 count 불일치: 저장 ${subscriptions.length}, 조회 ${verified.length}`,
+        `구독 저장 직후 조회에 아직 반영되지 않음. 저장=${subscriptions.length}, 조회=${verified.length}`,
       );
     }
+  } catch (error) {
+    console.warn("구독 저장 직후 검증 조회 실패(무시):", error);
   }
 
   return subscriptions;
@@ -293,6 +417,9 @@ export async function removeSubscription(
 }
 
 export async function getSentSlots(): Promise<Record<string, string>> {
+  if (usePostgresStorage()) {
+    return readPostgresJson<Record<string, string>>(PG_SENT_SLOTS_KEY, {});
+  }
   if (useBlobStorage()) {
     return readBlobJson<Record<string, string>>(SENT_SLOTS_BLOB_PATH, {});
   }
@@ -308,6 +435,11 @@ export async function markSentSlot(slotKey: string) {
     if (new Date(value).getTime() < cutoff) {
       delete sentSlots[key];
     }
+  }
+
+  if (usePostgresStorage()) {
+    await writePostgresJson(PG_SENT_SLOTS_KEY, sentSlots);
+    return;
   }
 
   if (useBlobStorage()) {
@@ -371,14 +503,17 @@ export function isCronAuthorized(request: Request): boolean {
 }
 
 export function getPushStorageInfo() {
+  const postgresConfigured = usePostgresStorage();
   const blobTokenPresent = Boolean(getBlobToken());
   const blobStoreIdPresent = Boolean(process.env.BLOB_STORE_ID);
 
   return {
-    storage:
-      blobTokenPresent || (isVercelRuntime() && blobStoreIdPresent)
+    storage: postgresConfigured
+      ? "neon-postgres"
+      : blobTokenPresent || (isVercelRuntime() && blobStoreIdPresent)
         ? "vercel-blob"
         : "local-file",
+    postgresConfigured,
     blobConfigured: blobTokenPresent,
     blobStoreIdPresent,
     isVercel: isVercelRuntime(),

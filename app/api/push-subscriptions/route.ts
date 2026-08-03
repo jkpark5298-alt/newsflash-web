@@ -71,8 +71,18 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     console.error("구독 등록 API 에러:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
+    const suspended =
+      /store has been suspended/i.test(message) ||
+      /store is blocked/i.test(message) ||
+      /BlobStoreSuspended/i.test(message);
+
     return NextResponse.json(
-      { error: "서버 처리 중 오류가 발생했습니다.", detail: message },
+      {
+        error: suspended
+          ? "Vercel Blob 스토어가 정지되어 구독을 저장할 수 없습니다. Neon(DATABASE_URL) 연결 여부를 확인하세요."
+          : "서버 처리 중 오류가 발생했습니다.",
+        detail: message,
+      },
       { status: 500 },
     );
   }
