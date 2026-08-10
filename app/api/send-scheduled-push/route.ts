@@ -21,7 +21,14 @@ type NotificationPayload = {
   tag: string;
   url?: string;
   slotKey?: string;
+  view?: "alerts";
+  focus?: "news" | "stock" | "keyword";
+  articles?: Array<{ title?: string; link?: string; description?: string; source?: string }>;
 };
+
+const ALERT_BOARD_NEWS_URL = "/?view=alerts&focus=news#recent-scheduled-alerts";
+const ALERT_BOARD_STOCK_URL = "/?view=alerts&focus=stock#recent-scheduled-alerts";
+const ALERT_BOARD_URL = "/?view=alerts#recent-scheduled-alerts";
 
 const NEWS_HOURS = [
   "07:00",
@@ -50,7 +57,12 @@ async function buildScheduledNotifications(
   hours: number,
   minutes: number,
   dateStr: string,
-  breakingNews: Array<{ title?: string }>,
+  breakingNews: Array<{
+    title?: string;
+    link?: string;
+    description?: string;
+    source?: string;
+  }>,
   marketData: Array<{ key?: string; value?: string; change?: string }>,
 ): Promise<NotificationPayload[]> {
   const notifications: NotificationPayload[] = [];
@@ -71,7 +83,15 @@ async function buildScheduledNotifications(
             .map((art, idx) => `${idx + 1}. ${art.title || "제목 없음"}`)
             .join("\n"),
           tag: `scheduled-news-${hours}`,
-          url: "/#detail-view-section",
+          url: ALERT_BOARD_NEWS_URL,
+          view: "alerts",
+          focus: "news",
+          articles: top5.map((art) => ({
+            title: art.title,
+            link: art.link,
+            description: art.description,
+            source: art.source,
+          })),
           slotKey,
         });
       }
@@ -95,7 +115,9 @@ async function buildScheduledNotifications(
             `· 미 증시 (DOW/NASDAQ/S&P500): ${usMarket?.value || "로딩 실패"}`,
           ].join("\n"),
           tag: `scheduled-stock-${hours}`,
-          url: "/#detail-view-section",
+          url: ALERT_BOARD_STOCK_URL,
+          view: "alerts",
+          focus: "stock",
           slotKey,
         });
       } else {
@@ -106,7 +128,9 @@ async function buildScheduledNotifications(
             `· KOSDAQ: ${kosdaq?.value || "-"} (${kosdaq?.change || "-"})`,
           ].join("\n"),
           tag: `scheduled-stock-${hours}`,
-          url: "/#detail-view-section",
+          url: ALERT_BOARD_STOCK_URL,
+          view: "alerts",
+          focus: "stock",
           slotKey,
         });
       }
@@ -150,7 +174,7 @@ function buildKeywordNotifications(
       title: `🚨 [속보 알림: ${matchedKeyword}] ${article.title || "새 속보"}`,
       body: article.description || "자세한 내용은 클릭하여 확인하세요.",
       tag: link,
-      url: article.link || "/#detail-view-section",
+      url: article.link || ALERT_BOARD_URL,
     });
   }
 
@@ -314,7 +338,10 @@ export async function GET(request: Request) {
             JSON.stringify({
               title: alert.title,
               body: alert.body,
-              url: alert.url || "/",
+              url: alert.url || ALERT_BOARD_URL,
+              view: alert.view || "alerts",
+              focus: alert.focus,
+              articles: alert.articles,
             }),
           );
           sentCount++;

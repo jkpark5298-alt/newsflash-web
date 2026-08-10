@@ -731,6 +731,56 @@ type PushSettings = {
     } catch (e) { console.error(e); }
   };
 
+  const openAlertBoard = (options?: {
+    focus?: string | null;
+    title?: string;
+    body?: string;
+    articles?: Array<{
+      title?: string;
+      link?: string;
+      description?: string;
+      source?: string;
+      pubDate?: string;
+    }>;
+  }) => {
+    if (typeof window === "undefined") return;
+
+    setSelectedDetailView("알림 안내판");
+
+    const focus = options?.focus || "news";
+    if (
+      focus === "news" &&
+      Array.isArray(options?.articles) &&
+      options.articles.length > 0
+    ) {
+      const articles = options.articles.map((art) => ({
+        title: art.title || "제목 없음",
+        link: art.link || "#",
+        description: art.description || "",
+        source: art.source || "NewsFlash",
+        pubDate: art.pubDate || new Date().toISOString(),
+      }));
+      triggerScheduledNewsRecord(
+        options.title || "📰 [정기 뉴스 알림]",
+        articles,
+      );
+    } else if (focus === "stock" && options?.body) {
+      triggerScheduledStockRecord(
+        options.title || "📊 [증시 알림]",
+        options.body,
+      );
+    }
+
+    window.setTimeout(() => {
+      document
+        .getElementById("recent-scheduled-alerts")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document
+        .getElementById("detail-view-section")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+  };
+
   const saveRecentScheduledNewsToPersistent = () => {
     if (!recentScheduledNews) return;
     setSavedScheduledNews((prev) => {
@@ -1181,6 +1231,35 @@ type PushSettings = {
     if (selectedDetailView !== "알림 안내판") return;
     refreshPushSubscriptionStatus().catch(console.error);
   }, [selectedDetailView]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || loading) return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") === "alerts") {
+      openAlertBoard({ focus: params.get("focus") || "news" });
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.type !== "OPEN_ALERT_BOARD") return;
+      openAlertBoard({
+        focus: data.focus || "news",
+        title: data.title,
+        body: data.body,
+        articles: Array.isArray(data.articles) ? data.articles : [],
+      });
+    };
+
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", onMessage);
+    };
+  }, []);
 
   const toggleScheduledAlertEnabled = () => {
     const nextState = !scheduledAlertEnabled;
@@ -1695,9 +1774,18 @@ type PushSettings = {
               body,
               icon: top5[0]?.imageUrl || "/icons/icon-192.png",
               tag: alertKey,
+              data: {
+                url: "/?view=alerts&focus=news#recent-scheduled-alerts",
+                focus: "news",
+              },
             });
             notification.onclick = () => {
               window.focus();
+              openAlertBoard({
+                focus: "news",
+                title,
+                articles: top5,
+              });
             };
           } catch (e) {
             console.error("정기 뉴스 알림 발송 실패:", e);
@@ -1745,9 +1833,18 @@ type PushSettings = {
               body,
               icon: "/icons/icon-192.png",
               tag: alertKey,
+              data: {
+                url: "/?view=alerts&focus=stock#recent-scheduled-alerts",
+                focus: "stock",
+              },
             });
             notification.onclick = () => {
               window.focus();
+              openAlertBoard({
+                focus: "stock",
+                title,
+                body,
+              });
             };
           } catch (e) {
             console.error("정기 증시 알림 발송 실패:", e);
@@ -2512,7 +2609,14 @@ type PushSettings = {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="flex items-center gap-3">
-                <span className="text-3xl">📰</span>
+                <Image
+                  src="/cover.png"
+                  alt="NewsFlash LIVE NEWS"
+                  width={56}
+                  height={48}
+                  className="h-12 w-auto object-contain"
+                  priority
+                />
                 <h1 className="text-3xl font-bold text-gray-800">NewsFlash</h1>
               </div>
               <p className="text-gray-600 mt-2">
@@ -3205,7 +3309,7 @@ type PushSettings = {
                     </div>
 
                     {/* 3. Recent Scheduled Alert Recording & Management (1 item per prev slot) */}
-                    <div className="mt-8 border-t border-gray-100 pt-6">
+                    <div id="recent-scheduled-alerts" className="mt-8 border-t border-gray-100 pt-6 scroll-mt-32">
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
                         <div>
                           <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
