@@ -1,6 +1,5 @@
 // public/sw.js
 
-// 1. 서비스 워커 설치 및 활성화 즉시 제어권 획득
 self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
@@ -9,12 +8,14 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// 2. 푸시 메시지 수신 이벤트 처리
 self.addEventListener("push", (event) => {
   let data = {
     title: "알림 타이틀",
     body: "알림 내용을 확인하세요.",
-    url: "/",
+    url: "/?view=alerts#recent-scheduled-alerts",
+    view: "alerts",
+    focus: undefined,
+    articles: undefined,
   };
 
   if (event.data) {
@@ -25,36 +26,75 @@ self.addEventListener("push", (event) => {
     }
   }
 
+  const targetUrl =
+    data.url ||
+    (data.focus === "stock"
+      ? "/?view=alerts&focus=stock#recent-scheduled-alerts"
+      : data.focus === "news"
+        ? "/?view=alerts&focus=news#recent-scheduled-alerts"
+        : "/?view=alerts#recent-scheduled-alerts");
+
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: "/icons/icon-192.png", // 알림 아이콘 경로
-      badge: "/icons/icon-192.png", // 상태바 아이콘 경로
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
       data: {
-        url: data.url, // 클릭 시 이동할 URL 저장
+        url: targetUrl,
+        view: data.view || "alerts",
+        focus: data.focus,
+        title: data.title,
+        body: data.body,
+        articles: data.articles,
       },
-    })
+    }),
   );
 });
 
-// 3. 알림 클릭 시 특정 URL로 창 열기 또는 포커스 이동
 self.addEventListener("notificationclick", (event) => {
-  event.notification.close(); // 알림 닫기
-  const targetUrl = event.notification.data?.url || "/";
+  event.notification.close();
+
+  const payload = event.notification.data || {};
+  const relativeUrl =
+    payload.url || "/?view=alerts#recent-scheduled-alerts";
+  const targetUrl = new URL(relativeUrl, self.location.origin).href;
+
+  const message = {
+    type: "OPEN_ALERT_BOARD",
+    focus: payload.focus || "news",
+    title: payload.title || event.notification.title,
+    body: payload.body || event.notification.body,
+    articles: payload.articles || [],
+  };
 
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      // 이미 열려 있는 해당 사이트 창이 있다면 포커스
-      for (const client of clientList) {
-        if ("focus" in client) {
-          client.navigate(targetUrl);
-          return client.focus();
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then(async (clientList) => {
+        for (const client of clientList) {
+          if ("focus" in client) {
+            try {
+              if ("navigate" in client) {
+                await client.navigate(targetUrl);
+              }
+            } catch (error) {
+              // navigate may fail on some iOS PWA builds; postMessage still opens the board
+            }
+            client.postMessage(message);
+            return client.focus();
+          }
         }
-      }
-      // 열려 있는 창이 없다면 새로 열기
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
-      }
-    })
+
+        if (self.clients.openWindow) {
+          const opened = await self.clients.openWindow(targetUrl);
+          if (opened) {
+            // Give the new page a moment, then ask it to open the alert board.
+            setTimeout(() => {
+              opened.postMessage(message);
+            }, 800);
+          }
+          return opened;
+        }
+      }),
   );
 });

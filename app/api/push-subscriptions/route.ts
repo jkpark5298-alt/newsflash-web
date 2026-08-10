@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  findOwnedSubscription,
   getPushStorageInfo,
   getSubscriptions,
   getVapidPublicKey,
@@ -9,12 +10,24 @@ import {
 
 export async function GET() {
   const subs = await getSubscriptions();
+  const storage = getPushStorageInfo();
+
+  let vapidPublicKey = "";
+  try {
+    vapidPublicKey = getVapidPublicKey();
+  } catch (error) {
+    console.error("VAPID public key unavailable:", error);
+  }
 
   return NextResponse.json(
     {
       count: subs.length,
-      vapidPublicKey: getVapidPublicKey(),
-      storage: getPushStorageInfo(),
+      vapidPublicKey,
+      storage,
+      cronSecretConfigured: Boolean(process.env.CRON_SECRET),
+      pushReady:
+        subs.length >= 1 &&
+        (storage.postgresConfigured || storage.blobConfigured),
     },
     {
       headers: {
@@ -90,12 +103,31 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const { endpoint } = await request.json();
+    const { endpoint, keys } = await request.json();
 
     if (!endpoint) {
       return NextResponse.json(
         { error: "endpoint가 존재하지 않습니다." },
         { status: 400 },
+      );
+    }
+
+    if (!keys?.p256dh || !keys?.auth) {
+      return NextResponse.json(
+        { error: "구독 keys(p256dh/auth)가 필요합니다." },
+        { status: 400 },
+      );
+    }
+
+    const owned = await findOwnedSubscription(endpoint, {
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+    });
+
+    if (!owned) {
+      return NextResponse.json(
+        { error: "구독 소유권을 확인할 수 없습니다." },
+        { status: 403 },
       );
     }
 
