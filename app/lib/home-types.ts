@@ -104,5 +104,6 @@ export type IssueGroup = Article & {
 export type PushSettings = {
   alertEnabled: boolean;
   scheduledAlertEnabled: boolean;
+  scheduledNewsHours: string[];
   alertKeywords: string[];
 };

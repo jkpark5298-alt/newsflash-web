@@ -9,6 +9,7 @@ export const SAVED_ARTICLES_STORAGE_KEY = "newsflash.savedArticles.v1";
 export const ALERT_KEYWORDS_STORAGE_KEY = "newsflash.alertKeywords.v1";
 export const ALERT_ENABLED_STORAGE_KEY = "newsflash.alertEnabled.v1";
 export const SCHEDULED_ALERT_ENABLED_STORAGE_KEY = "newsflash.scheduledAlertEnabled.v1";
+export const SCHEDULED_NEWS_HOURS_STORAGE_KEY = "newsflash.scheduledNewsHours.v1";
 export const RECENT_SCHEDULED_NEWS_STORAGE_KEY = "newsflash.recentScheduledNews.v1";
 export const SAVED_SCHEDULED_NEWS_STORAGE_KEY = "newsflash.savedScheduledNews.v1";
 export const RECENT_SCHEDULED_STOCK_STORAGE_KEY = "newsflash.recentScheduledStock.v1";

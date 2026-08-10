@@ -15,6 +15,7 @@ import {
   ALERT_KEYWORDS_STORAGE_KEY,
   ALERT_ENABLED_STORAGE_KEY,
   SCHEDULED_ALERT_ENABLED_STORAGE_KEY,
+  SCHEDULED_NEWS_HOURS_STORAGE_KEY,
   RECENT_SCHEDULED_NEWS_STORAGE_KEY,
   SAVED_SCHEDULED_NEWS_STORAGE_KEY,
   RECENT_SCHEDULED_STOCK_STORAGE_KEY,
@@ -24,10 +25,12 @@ import {
   DETAIL_VIEW_OPTIONS,
 } from "./lib/home-constants";
 import {
-  NEWS_HOURS,
-  NEWS_HOURS_LABEL,
+  DEFAULT_NEWS_HOURS,
+  SELECTABLE_NEWS_HOURS,
   STOCK_HOURS,
   STOCK_HOURS_LABEL,
+  formatNewsHoursLabel,
+  normalizeScheduledNewsHours,
 } from "@/lib/alert-schedule";
 import type {
   ScheduledNewsAlertItem,
@@ -96,9 +99,18 @@ export default function Home() {
   const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
   const [isEconomyNewsExpanded, setIsEconomyNewsExpanded] = useState(false);
 
-const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
+  const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
   const [alertEnabled, setAlertEnabled] = useState<boolean>(false);
   const [scheduledAlertEnabled, setScheduledAlertEnabled] = useState<boolean>(false);
+  const [scheduledNewsHours, setScheduledNewsHours] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [...DEFAULT_NEWS_HOURS];
+    try {
+      const saved = window.localStorage.getItem(SCHEDULED_NEWS_HOURS_STORAGE_KEY);
+      return normalizeScheduledNewsHours(saved ? JSON.parse(saved) : null);
+    } catch {
+      return [...DEFAULT_NEWS_HOURS];
+    }
+  });
 
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const [serverSubscriptionCount, setServerSubscriptionCount] = useState<number | null>(null);
@@ -321,6 +333,7 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
   const getCurrentPushSettings = (overrides?: Partial<PushSettings>): PushSettings => ({
     alertEnabled: overrides?.alertEnabled ?? alertEnabled,
     scheduledAlertEnabled: overrides?.scheduledAlertEnabled ?? scheduledAlertEnabled,
+    scheduledNewsHours: overrides?.scheduledNewsHours ?? scheduledNewsHours,
     alertKeywords: overrides?.alertKeywords ?? alertKeywords,
   });
 
@@ -364,6 +377,7 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
           keys: serializePushSubscription(activeSubscription).keys,
           alertEnabled: effectiveSettings.alertEnabled,
           scheduledAlertEnabled: effectiveSettings.scheduledAlertEnabled,
+          scheduledNewsHours: effectiveSettings.scheduledNewsHours,
           alertKeywords: effectiveSettings.alertKeywords,
         }),
       });
@@ -442,6 +456,7 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
           userAgent: navigator.userAgent,
           alertEnabled: effectiveSettings.alertEnabled,
           scheduledAlertEnabled: effectiveSettings.scheduledAlertEnabled,
+          scheduledNewsHours: effectiveSettings.scheduledNewsHours,
           alertKeywords: effectiveSettings.alertKeywords,
         }),
       });
@@ -500,6 +515,7 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
     const nextSettings: PushSettings = {
       alertEnabled: true,
       scheduledAlertEnabled: true,
+      scheduledNewsHours,
       alertKeywords,
     };
 
@@ -695,6 +711,7 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
       enablePushNotification(true, true, {
         alertEnabled,
         scheduledAlertEnabled: nextState,
+        scheduledNewsHours,
         alertKeywords,
       }).catch(console.error);
     } else if (!alertEnabled) {
@@ -848,11 +865,16 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
       window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
       window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(alertEnabled));
       window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, JSON.stringify(scheduledAlertEnabled));
+      window.localStorage.setItem(
+        SCHEDULED_NEWS_HOURS_STORAGE_KEY,
+        JSON.stringify(normalizeScheduledNewsHours(scheduledNewsHours)),
+      );
 
       if (alertEnabled || scheduledAlertEnabled) {
         const registered = await enablePushNotification(true, true, {
           alertEnabled,
           scheduledAlertEnabled,
+          scheduledNewsHours,
           alertKeywords,
         });
         if (registered) {
@@ -881,6 +903,7 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
       enablePushNotification(true, true, {
         alertEnabled: nextState,
         scheduledAlertEnabled,
+        scheduledNewsHours,
         alertKeywords,
       }).catch(console.error);
     } else if (!scheduledAlertEnabled) {
@@ -1188,6 +1211,10 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
           SCHEDULED_ALERT_ENABLED_STORAGE_KEY,
           JSON.stringify(scheduledAlertEnabled),
         );
+        window.localStorage.setItem(
+          SCHEDULED_NEWS_HOURS_STORAGE_KEY,
+          JSON.stringify(normalizeScheduledNewsHours(scheduledNewsHours)),
+        );
       } catch (error) {
         console.error(error);
       }
@@ -1195,12 +1222,13 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
       syncPushPreferences(undefined, {
         alertEnabled,
         scheduledAlertEnabled,
+        scheduledNewsHours,
         alertKeywords,
       }).catch(console.error);
     }, 600);
 
     return () => window.clearTimeout(timer);
-  }, [alertKeywords, alertEnabled, scheduledAlertEnabled]);
+  }, [alertKeywords, alertEnabled, scheduledAlertEnabled, scheduledNewsHours]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -1240,8 +1268,8 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
       // Prefer server Web Push when subscribed to avoid duplicate popups.
       const useClientPopup = !hasWebPushSubscriptionRef.current;
 
-      // 1. 정기 뉴스 알림 (기본 슬롯만)
-      const newsHours = [...NEWS_HOURS];
+      // 1. 정기 뉴스 알림 (사용자 선택 슬롯)
+      const newsHours = normalizeScheduledNewsHours(scheduledNewsHours);
       if (newsHours.includes(hourSlot)) {
         const alertKey = `${dateStr}-${hourSlot}-news`;
         if (!sentScheduledAlertsRef.current.has(alertKey) && breakingNews.length > 0) {
@@ -1342,7 +1370,7 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
 
     const timer = setInterval(checkScheduledAlerts, 20000);
     return () => clearInterval(timer);
-  }, [scheduledAlertEnabled, breakingNews, koreanMarketCards, usMarketCards]);
+  }, [scheduledAlertEnabled, scheduledNewsHours, breakingNews, koreanMarketCards, usMarketCards]);
 
   const fxRateCard = useMemo<CompactMarketCard>(() => {
     const indicator = economyIndicators.find((item) => item.key === "usdkrw");
@@ -2697,29 +2725,76 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
                   </div>
 
                   {/* 1-2. Scheduled Alert Status & Enable Toggle */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 pb-6 border-b border-gray-100 gap-4">
-                    <div>
-                      <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
-                        <span>⏰</span>
-                        <span>정기 시간대 뉴스 및 주가지수 알림</span>
-                      </h3>
-                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                        · <b>뉴스 5선</b>: {NEWS_HOURS_LABEL} (KST)<br/>
-                        · <b>주가지수</b>: {STOCK_HOURS_LABEL} (KST)<br/>
-                        · <b>iPhone</b>: 홈 화면에 추가한 PWA에서만 백그라운드 푸시가 옵니다.
-                      </p>
+                  <div className="mb-6 pb-6 border-b border-gray-100">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div>
+                        <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
+                          <span>⏰</span>
+                          <span>정기 시간대 뉴스 및 주가지수 알림</span>
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                          · <b>뉴스 5선</b>: 아래에서 받을 시간(KST)을 선택하세요<br/>
+                          · <b>주가지수</b>: {STOCK_HOURS_LABEL} (KST)<br/>
+                          · <b>iPhone</b>: 홈 화면에 추가한 PWA에서만 백그라운드 푸시가 옵니다.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={toggleScheduledAlertEnabled}
+                        className={`px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer whitespace-nowrap ${
+                          scheduledAlertEnabled && notificationPermission === "granted"
+                            ? "bg-blue-600 text-white hover:bg-blue-700"
+                            : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                        }`}
+                      >
+                        {scheduledAlertEnabled && notificationPermission === "granted" ? "정기알림 ON" : "정기알림 OFF"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={toggleScheduledAlertEnabled}
-                      className={`px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer whitespace-nowrap ${
-                        scheduledAlertEnabled && notificationPermission === "granted"
-                          ? "bg-blue-600 text-white hover:bg-blue-700"
-                          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                      }`}
-                    >
-                      {scheduledAlertEnabled && notificationPermission === "granted" ? "정기알림 ON" : "정기알림 OFF"}
-                    </button>
+
+                    <div className="mt-4">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-gray-800">
+                          뉴스 알림 시간 (선택: {formatNewsHoursLabel(scheduledNewsHours)}시)
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setScheduledNewsHours([...DEFAULT_NEWS_HOURS])
+                          }
+                          className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                        >
+                          추천 시간으로
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {SELECTABLE_NEWS_HOURS.map((slot) => {
+                          const selected = scheduledNewsHours.includes(slot);
+                          return (
+                            <button
+                              key={slot}
+                              type="button"
+                              onClick={() => {
+                                setScheduledNewsHours((current) => {
+                                  const next = selected
+                                    ? current.filter((h) => h !== slot)
+                                    : [...current, slot];
+                                  return normalizeScheduledNewsHours(
+                                    next.length > 0 ? next : DEFAULT_NEWS_HOURS,
+                                  );
+                                });
+                              }}
+                              className={`rounded-full px-3 py-1.5 text-xs font-bold border transition ${
+                                selected
+                                  ? "bg-rose-600 text-white border-rose-600"
+                                  : "bg-white text-gray-600 border-gray-200 hover:border-rose-300"
+                              }`}
+                            >
+                              {slot.slice(0, 2)}시
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
                   {/* 2. Keyword input and list */}

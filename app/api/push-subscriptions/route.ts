@@ -7,6 +7,7 @@ import {
   removeSubscription,
   upsertSubscription,
 } from "@/lib/push-storage";
+import { normalizeScheduledNewsHours } from "@/lib/alert-schedule";
 
 export async function GET() {
   const subs = await getSubscriptions();
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
       userAgent,
       alertEnabled,
       scheduledAlertEnabled,
+      scheduledNewsHours,
       alertKeywords,
     } = await request.json();
 
@@ -73,6 +75,9 @@ export async function POST(request: Request) {
       updatedAt: new Date().toISOString(),
       alertEnabled: alertEnabled ?? undefined,
       scheduledAlertEnabled: scheduledAlertEnabled ?? undefined,
+      scheduledNewsHours: Array.isArray(scheduledNewsHours)
+        ? normalizeScheduledNewsHours(scheduledNewsHours)
+        : undefined,
       alertKeywords: Array.isArray(alertKeywords) ? alertKeywords : undefined,
     });
 

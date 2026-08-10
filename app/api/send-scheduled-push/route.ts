@@ -11,7 +11,7 @@ import {
   saveSubscriptions,
   type PushSubscriptionRecord,
 } from "@/lib/push-storage";
-import { NEWS_HOURS, STOCK_HOURS } from "@/lib/alert-schedule";
+import { SELECTABLE_NEWS_HOURS, STOCK_HOURS, normalizeScheduledNewsHours } from "@/lib/alert-schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -47,7 +47,7 @@ async function buildScheduledNotifications(
 ): Promise<NotificationPayload[]> {
   const notifications: NotificationPayload[] = [];
   const hourSlot = `${String(hours).padStart(2, "0")}:00`;
-  const isNewsTime = NEWS_HOURS.includes(hourSlot);
+  const isNewsTime = SELECTABLE_NEWS_HOURS.includes(hourSlot);
   const isStockTime = STOCK_HOURS.includes(hourSlot);
 
   if (force || test || isNewsTime) {
@@ -176,7 +176,7 @@ export async function GET(request: Request) {
 
     const { hours, minutes, timeStr, dateStr } = getKstTimeParts();
     const hourSlot = `${String(hours).padStart(2, "0")}:00`;
-    const isNewsTime = NEWS_HOURS.includes(hourSlot);
+    const isNewsTime = SELECTABLE_NEWS_HOURS.includes(hourSlot);
     const isStockTime = STOCK_HOURS.includes(hourSlot);
     const shouldSendScheduled = force || test || isNewsTime || isStockTime;
 
@@ -264,7 +264,16 @@ export async function GET(request: Request) {
       const notifications: NotificationPayload[] = [];
 
       if (sub.scheduledAlertEnabled !== false) {
-        notifications.push(...scheduledNotifications);
+        const userNewsHours = normalizeScheduledNewsHours(sub.scheduledNewsHours);
+        for (const alert of scheduledNotifications) {
+          if (alert.focus === "news") {
+            if (force || test || userNewsHours.includes(hourSlot)) {
+              notifications.push(alert);
+            }
+          } else {
+            notifications.push(alert);
+          }
+        }
       }
 
       const keywordResult = buildKeywordNotifications(sub, breakingNews);

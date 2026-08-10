@@ -12,6 +12,8 @@ export type PushSubscriptionRecord = {
   updatedAt?: string;
   alertEnabled?: boolean;
   scheduledAlertEnabled?: boolean;
+  /** KST hour slots like "07:00". Empty/missing → defaults. */
+  scheduledNewsHours?: string[];
   alertKeywords?: string[];
   seenArticleLinks?: string[];
 };
@@ -393,15 +395,20 @@ export async function upsertSubscription(
     (sub) => sub.endpoint === record.endpoint,
   );
 
+  const existing =
+    existingIndex > -1 ? subscriptions[existingIndex] : undefined;
+
   const merged: PushSubscriptionRecord = {
-    ...(existingIndex > -1 ? subscriptions[existingIndex] : {}),
+    ...(existing || {}),
     ...record,
+    alertEnabled: record.alertEnabled ?? existing?.alertEnabled,
+    scheduledAlertEnabled:
+      record.scheduledAlertEnabled ?? existing?.scheduledAlertEnabled,
+    scheduledNewsHours:
+      record.scheduledNewsHours ?? existing?.scheduledNewsHours,
+    alertKeywords: record.alertKeywords ?? existing?.alertKeywords,
     seenArticleLinks:
-      record.seenArticleLinks ??
-      (existingIndex > -1
-        ? subscriptions[existingIndex].seenArticleLinks
-        : []) ??
-      [],
+      record.seenArticleLinks ?? existing?.seenArticleLinks ?? [],
   };
 
   if (existingIndex > -1) {

@@ -5,6 +5,7 @@ import {
   saveSubscriptions,
   type PushSubscriptionRecord,
 } from "@/lib/push-storage";
+import { normalizeScheduledNewsHours } from "@/lib/alert-schedule";
 
 export async function POST(request: Request) {
   try {
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
       keys,
       alertEnabled,
       scheduledAlertEnabled,
+      scheduledNewsHours,
       alertKeywords,
     } = await request.json();
 
@@ -68,6 +70,9 @@ export async function POST(request: Request) {
         typeof scheduledAlertEnabled === "boolean"
           ? scheduledAlertEnabled
           : subscriptions[index].scheduledAlertEnabled,
+      scheduledNewsHours: Array.isArray(scheduledNewsHours)
+        ? normalizeScheduledNewsHours(scheduledNewsHours)
+        : subscriptions[index].scheduledNewsHours,
       alertKeywords: Array.isArray(alertKeywords)
         ? alertKeywords
         : subscriptions[index].alertKeywords,

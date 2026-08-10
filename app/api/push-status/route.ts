@@ -8,7 +8,7 @@ import {
   hasSentSlot,
   isCronAuthorized,
 } from "@/lib/push-storage";
-import { NEWS_HOURS, STOCK_HOURS } from "@/lib/alert-schedule";
+import { SELECTABLE_NEWS_HOURS, STOCK_HOURS } from "@/lib/alert-schedule";
 
 export async function GET(request: Request) {
   if (!isCronAuthorized(request)) {
@@ -40,7 +40,9 @@ export async function GET(request: Request) {
     ),
     cronSecretConfigured: Boolean(process.env.CRON_SECRET),
     currentHourSlot: `${String(hours).padStart(2, "0")}:00`,
-    isNewsHour: NEWS_HOURS.includes(`${String(hours).padStart(2, "0")}:00`),
+    isNewsHour: SELECTABLE_NEWS_HOURS.includes(
+      `${String(hours).padStart(2, "0")}:00`,
+    ),
     isStockHour: STOCK_HOURS.includes(`${String(hours).padStart(2, "0")}:00`),
     recentSentSlots: Object.entries(sentSlots).slice(-5),
     pushReady:
