@@ -11,6 +11,7 @@ import {
   saveSubscriptions,
   type PushSubscriptionRecord,
 } from "@/lib/push-storage";
+import { NEWS_HOURS, STOCK_HOURS } from "@/lib/alert-schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,27 +30,6 @@ type NotificationPayload = {
 const ALERT_BOARD_NEWS_URL = "/?view=alerts&focus=news#recent-scheduled-alerts";
 const ALERT_BOARD_STOCK_URL = "/?view=alerts&focus=stock#recent-scheduled-alerts";
 const ALERT_BOARD_URL = "/?view=alerts#recent-scheduled-alerts";
-
-const NEWS_HOURS = [
-  "07:00",
-  "08:00",
-  "09:00",
-  "10:00",
-  "11:00",
-  "12:00",
-  "13:00",
-  "14:00",
-  "15:00",
-  "16:00",
-  "17:00",
-  "18:00",
-  "19:00",
-  "20:00",
-  "21:00",
-  "22:00",
-  "23:00",
-];
-const STOCK_HOURS = ["07:00", "12:00", "16:00"];
 
 async function buildScheduledNotifications(
   force: boolean,

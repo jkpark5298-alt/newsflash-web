@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import MiniTrend from "./components/MiniTrend";
+import IosInstallBanner from "./components/IosInstallBanner";
 import {
   BREAKING_REFRESH_MS,
   COMMUNITY_REFRESH_MS,
@@ -22,6 +23,12 @@ import {
   REGION_KEYWORDS,
   DETAIL_VIEW_OPTIONS,
 } from "./lib/home-constants";
+import {
+  NEWS_HOURS,
+  NEWS_HOURS_LABEL,
+  STOCK_HOURS,
+  STOCK_HOURS_LABEL,
+} from "@/lib/alert-schedule";
 import type {
   ScheduledNewsAlertItem,
   ScheduledStockAlertItem,
@@ -100,6 +107,9 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
   const [pushConnectionMessage, setPushConnectionMessage] = useState<string>("");
   const [isConnectingPush, setIsConnectingPush] = useState(false);
   const hasWebPushSubscriptionRef = useRef(false);
+  const skipAlertAutoSyncRef = useRef(true);
+  const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] = useState(false);
+  const [showDebugTools, setShowDebugTools] = useState(false);
   const [keywordInput, setKeywordInput] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [recentScheduledNews, setRecentScheduledNews] = useState<ScheduledNewsAlertItem | null>(() => {
@@ -846,11 +856,11 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
           alertKeywords,
         });
         if (registered) {
-          alert("알림 설정이 저장되었고 백그라운드 푸시 구독이 연동되었습니다. /api/push-subscriptions 에서 count:1을 확인하세요.");
+          alert("알림 설정이 저장되었고 푸시가 연동되었습니다.");
         } else if (Notification.permission !== "granted") {
-          alert("알림 설정은 저장되었으나, 알림 권한이 허용되지 않았습니다. iPhone 설정 → 알림 → NewsFlash에서 확인바랍니다.");
+          alert("알림 설정은 저장되었으나, 알림 권한이 허용되지 않았습니다. iPhone 설정 → 알림 → NewsFlash에서 확인해 주세요.");
         } else {
-          alert("알림 설정은 저장되었으나, 서버 구독(count) 등록에 실패했습니다. iPhone 홈 화면 PWA에서 다시 '설정 저장'을 눌러주세요.");
+          alert("알림 설정은 저장되었으나 푸시 연결에 실패했습니다. 홈 화면 앱에서 '푸시 연결하기'를 다시 눌러 주세요.");
         }
         return;
       }
@@ -1152,6 +1162,47 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
   }, [marketData]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setShowDebugTools(params.get("debug") === "1");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (skipAlertAutoSyncRef.current) {
+      skipAlertAutoSyncRef.current = false;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          ALERT_KEYWORDS_STORAGE_KEY,
+          JSON.stringify(alertKeywords),
+        );
+        window.localStorage.setItem(
+          ALERT_ENABLED_STORAGE_KEY,
+          JSON.stringify(alertEnabled),
+        );
+        window.localStorage.setItem(
+          SCHEDULED_ALERT_ENABLED_STORAGE_KEY,
+          JSON.stringify(scheduledAlertEnabled),
+        );
+      } catch (error) {
+        console.error(error);
+      }
+
+      syncPushPreferences(undefined, {
+        alertEnabled,
+        scheduledAlertEnabled,
+        alertKeywords,
+      }).catch(console.error);
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [alertKeywords, alertEnabled, scheduledAlertEnabled]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
 
     const refreshWebPushFlag = async () => {
@@ -1189,8 +1240,8 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
       // Prefer server Web Push when subscribed to avoid duplicate popups.
       const useClientPopup = !hasWebPushSubscriptionRef.current;
 
-      // 1. 정기 뉴스 알림 (07:00 ~ 23:00, KST 해당 시간대 1회)
-      const newsHours = ["07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
+      // 1. 정기 뉴스 알림 (기본 슬롯만)
+      const newsHours = [...NEWS_HOURS];
       if (newsHours.includes(hourSlot)) {
         const alertKey = `${dateStr}-${hourSlot}-news`;
         if (!sentScheduledAlertsRef.current.has(alertKey) && breakingNews.length > 0) {
@@ -1227,8 +1278,8 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
         }
       }
 
-      // 2. 정기 주가지수 알림 (07:00, 12:00, 16:00 정각)
-      const stockHours = ["07:00", "12:00", "16:00"];
+      // 2. 정기 주가지수 알림
+      const stockHours = [...STOCK_HOURS];
       if (stockHours.includes(hourSlot)) {
         const alertKey = `${dateStr}-${hourSlot}-stock`;
         if (!sentScheduledAlertsRef.current.has(alertKey)) {
@@ -2039,6 +2090,9 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+      <IosInstallBanner
+        onOpenAlerts={() => setSelectedDetailView("알림 안내판")}
+      />
       <header className="bg-white shadow-md sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2561,56 +2615,59 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl shadow-md p-6 mb-5 border border-amber-200 bg-amber-50/40">
-                  <h3 className="font-bold text-gray-900 mb-2">📲 iPhone 푸시 연결 (필수)</h3>
-                  <div className="text-xs text-gray-600 space-y-1 mb-4">
-                    <p>· 실행 환경: <b>{typeof window !== "undefined" ? getPushEnvironmentLabel() : "확인 중"}</b></p>
-                    <p>· 알림 권한: <b>{notificationPermission}</b></p>
-                    <p>· 서버 구독 count: <b>{serverSubscriptionCount ?? "확인 중"}</b> (1 이상이어야 푸시 발송됨)</p>
-                    <p>
-                      · 백그라운드 cron:{" "}
-                      <b>
-                        {cronSecretConfigured === null
-                          ? "확인 중"
-                          : cronSecretConfigured
-                            ? "CRON_SECRET 설정됨 (GitHub Actions 5분 / Vercel 매일 1회)"
-                            : "미설정"}
-                      </b>
-                    </p>
-                    <p>
-                      · 푸시 저장소:{" "}
-                      <b>
-                        {pushReady === null
-                          ? "확인 중"
-                          : pushReady
-                            ? "준비됨"
-                            : "미준비 (Neon/Blob 확인 필요)"}
-                      </b>
-                    </p>
-                    {serverSubscriptionCount === 0 ? (
-                      <p className="text-red-700 font-medium">
-                        · 현재 구독 0건이라 서버 푸시가 발송되지 않습니다. 아래 버튼으로 다시 연결하세요.
-                      </p>
+                <div className="bg-white rounded-2xl shadow-md p-6 mb-5 border border-rose-100">
+                  <h3 className="font-bold text-gray-900 mb-2">푸시 연결</h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    홈 화면에 추가한 NewsFlash 앱에서 연결하면, 앱을 닫아도 알림을 받을 수 있습니다.
+                  </p>
+                  <div className="mb-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    {(serverSubscriptionCount ?? 0) >= 1
+                      ? "알림 연결됨 — 테스트 알림이 이 기기로만 발송됩니다."
+                      : "아직 연결되지 않았습니다. 아래 버튼으로 연결해 주세요."}
+                    {pushConnectionMessage ? (
+                      <span className="mt-1 block text-xs text-amber-800">
+                        {pushConnectionMessage}
+                      </span>
                     ) : null}
-                    {cronSecretConfigured === false ? (
-                      <p className="text-red-700 font-medium">
-                        · 탭을 닫아도 알림을 받으려면 Vercel에 CRON_SECRET과 cron 스케줄이 필요합니다.
-                      </p>
-                    ) : null}
-                    {pushConnectionMessage ? <p className="text-amber-800">· {pushConnectionMessage}</p> : null}
                   </div>
                   <button
                     type="button"
                     onClick={() => connectIphonePush().catch(console.error)}
                     disabled={isConnectingPush}
-                    className="w-full md:w-auto px-5 py-3 rounded-xl bg-amber-500 text-white font-bold text-sm hover:bg-amber-600 transition cursor-pointer disabled:opacity-60"
+                    className="w-full md:w-auto px-5 py-3 rounded-xl bg-rose-600 text-white font-bold text-sm hover:bg-rose-700 transition cursor-pointer disabled:opacity-60"
                   >
-                    {isConnectingPush ? "연결 중..." : "📲 iPhone 푸시 연결 + 테스트 발송"}
+                    {isConnectingPush ? "연결 중..." : "푸시 연결하기"}
                   </button>
-                  <p className="text-[11px] text-gray-500 mt-3 leading-relaxed">
-                    홈 화면 PWA에서 이 버튼을 누르세요. Safari 탭에서는 count=0으로 남습니다.
-                    연결 후 서버 count가 1 이상이 되어야 정시/키워드 푸시가 나갑니다.
-                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedDiagnostics((v) => !v)}
+                    className="mt-3 block text-xs font-semibold text-slate-500 hover:text-slate-700"
+                  >
+                    {showAdvancedDiagnostics ? "고급 · 진단 닫기" : "고급 · 진단 보기"}
+                  </button>
+                  {showAdvancedDiagnostics ? (
+                    <div className="mt-3 space-y-1 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                      <p>· 실행 환경: {typeof window !== "undefined" ? getPushEnvironmentLabel() : "확인 중"}</p>
+                      <p>· 알림 권한: {notificationPermission}</p>
+                      <p>· 서버 구독: {serverSubscriptionCount ?? "확인 중"}</p>
+                      <p>
+                        · 백그라운드 cron:{" "}
+                        {cronSecretConfigured === null
+                          ? "확인 중"
+                          : cronSecretConfigured
+                            ? "설정됨"
+                            : "미설정"}
+                      </p>
+                      <p>
+                        · 푸시 저장소:{" "}
+                        {pushReady === null
+                          ? "확인 중"
+                          : pushReady
+                            ? "준비됨"
+                            : "미준비"}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="bg-white rounded-2xl shadow-md p-6">
@@ -2647,9 +2704,9 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
                         <span>정기 시간대 뉴스 및 주가지수 알림</span>
                       </h3>
                       <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                        · <b>뉴스 5선</b>: 매일 07:00 ~ 23:00까지 매시간 정각에 최신 뉴스 5개 요약 알림<br/>
-                        · <b>주가지수</b>: 07시(전일 KOSPI & 미 증시 지수), 12시/16시(현재 KOSPI, KOSDAQ 지수) 알림<br/>
-                        · <b>iPhone</b>: Safari에서 <b>홈 화면에 추가한 PWA</b>에서만 백그라운드 푸시가 옵니다.
+                        · <b>뉴스 5선</b>: {NEWS_HOURS_LABEL} (KST)<br/>
+                        · <b>주가지수</b>: {STOCK_HOURS_LABEL} (KST)<br/>
+                        · <b>iPhone</b>: 홈 화면에 추가한 PWA에서만 백그라운드 푸시가 옵니다.
                       </p>
                     </div>
                     <button
@@ -2742,6 +2799,9 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
                         설정 저장
                       </button>
                     </div>
+                    <p className="mt-2 text-right text-[11px] text-gray-400">
+                      키워드·토글은 변경 시 자동 저장됩니다. 저장 버튼은 푸시 재연결이 필요할 때 사용하세요.
+                    </p>
 
                     {/* 3. Recent Scheduled Alert Recording & Management (1 item per prev slot) */}
                     <div id="recent-scheduled-alerts" className="mt-8 border-t border-gray-100 pt-6 scroll-mt-32">
@@ -2749,12 +2809,13 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
                         <div>
                           <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
                             <span>📥</span>
-                            <span>최근 정기 알림 기록 (직전 회차 1개 관리)</span>
+                            <span>최근 정기 알림 기록</span>
                           </h3>
                           <p className="text-xs text-gray-500 mt-0.5">
                             직전 시간대에 전달된 뉴스 5선 및 주가지수 알림을 확인하고 보관하거나 삭제할 수 있습니다.
                           </p>
                         </div>
+                        {showDebugTools ? (
                         <button
                           type="button"
                           onClick={() => {
@@ -2773,12 +2834,13 @@ const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
                             ]);
                             triggerScheduledStockRecord(sampleStockTitle, sampleStockContent);
 
-                            alert("가상 정기 알림 1회가 로컬 기록으로 저장되었습니다. (전체 구독자 푸시 테스트는 비활성화됨)");
+                            alert("가상 정기 알림 1회가 로컬 기록으로 저장되었습니다.");
                           }}
                           className="px-3.5 py-1.5 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 text-xs font-bold transition cursor-pointer whitespace-nowrap"
                         >
                           ⚡ 테스트 알림 즉시 기록 생성
                         </button>
+                        ) : null}
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">

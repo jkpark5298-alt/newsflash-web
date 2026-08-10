@@ -8,6 +8,7 @@ import {
   hasSentSlot,
   isCronAuthorized,
 } from "@/lib/push-storage";
+import { NEWS_HOURS, STOCK_HOURS } from "@/lib/alert-schedule";
 
 export async function GET(request: Request) {
   if (!isCronAuthorized(request)) {
@@ -39,35 +40,15 @@ export async function GET(request: Request) {
     ),
     cronSecretConfigured: Boolean(process.env.CRON_SECRET),
     currentHourSlot: `${String(hours).padStart(2, "0")}:00`,
-    isNewsHour: [
-      "07:00",
-      "08:00",
-      "09:00",
-      "10:00",
-      "11:00",
-      "12:00",
-      "13:00",
-      "14:00",
-      "15:00",
-      "16:00",
-      "17:00",
-      "18:00",
-      "19:00",
-      "20:00",
-      "21:00",
-      "22:00",
-      "23:00",
-    ].includes(`${String(hours).padStart(2, "0")}:00`),
-    isStockHour: ["07:00", "12:00", "16:00"].includes(
-      `${String(hours).padStart(2, "0")}:00`,
-    ),
+    isNewsHour: NEWS_HOURS.includes(`${String(hours).padStart(2, "0")}:00`),
+    isStockHour: STOCK_HOURS.includes(`${String(hours).padStart(2, "0")}:00`),
     recentSentSlots: Object.entries(sentSlots).slice(-5),
     pushReady:
       subscriberCount >= 1 &&
       (storage.postgresConfigured || storage.blobConfigured),
     hint:
       subscriberCount === 0
-        ? "등록된 푸시 구독자가 없습니다. iPhone 홈 화면 PWA에서 'iPhone 푸시 연결 + 테스트 발송'을 실행하세요."
+        ? "등록된 푸시 구독자가 없습니다. iPhone 홈 화면 PWA에서 '푸시 연결하기'를 실행하세요."
         : undefined,
   });
 }
