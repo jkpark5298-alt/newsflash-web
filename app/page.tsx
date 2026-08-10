@@ -3,622 +3,56 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import MiniTrend from "./components/MiniTrend";
+import {
+  BREAKING_REFRESH_MS,
+  COMMUNITY_REFRESH_MS,
+  CARTOON_REFRESH_MS,
+  INTERNATIONAL_REFRESH_MS,
+  MARKET_REFRESH_MS,
+  SAVED_ARTICLES_STORAGE_KEY,
+  ALERT_KEYWORDS_STORAGE_KEY,
+  ALERT_ENABLED_STORAGE_KEY,
+  SCHEDULED_ALERT_ENABLED_STORAGE_KEY,
+  RECENT_SCHEDULED_NEWS_STORAGE_KEY,
+  SAVED_SCHEDULED_NEWS_STORAGE_KEY,
+  RECENT_SCHEDULED_STOCK_STORAGE_KEY,
+  SAVED_SCHEDULED_STOCK_STORAGE_KEY,
+  ECONOMY_INDICATORS,
+  REGION_KEYWORDS,
+  DETAIL_VIEW_OPTIONS,
+} from "./lib/home-constants";
+import type {
+  ScheduledNewsAlertItem,
+  ScheduledStockAlertItem,
+  RegionFilter,
+  DetailView,
+  EconomyIndicator,
+  CompactMarketCard,
+  MarketItem,
+  Article,
+  Cartoon,
+  CommunityIssue,
+  SavedArticle,
+  TranslationState,
+  IssueGroup,
+  PushSettings,
+} from "./lib/home-types";
+import {
+  extractIssueTokens,
+  getIssueCategory,
+  countTokenOverlap,
+  getIssueScore,
+  pickRepresentativeArticle,
+  buildIssueKeyword,
+  getSpecificIssueTokens,
+  normalizeIssueText,
+  isPoliticalCategory,
+} from "./lib/issue-clustering";
+import { serializePushSubscription } from "./lib/push-client";
 
-const BREAKING_REFRESH_MS = 5 * 60 * 1000;
-const COMMUNITY_REFRESH_MS = 5 * 60 * 1000;
-const CARTOON_REFRESH_MS = 60 * 60 * 1000;
-const INTERNATIONAL_REFRESH_MS = 15 * 60 * 1000;
-const MARKET_REFRESH_MS = 10 * 60 * 1000;
-const SAVED_ARTICLES_STORAGE_KEY = "newsflash.savedArticles.v1";
-const ALERT_KEYWORDS_STORAGE_KEY = "newsflash.alertKeywords.v1";
-const ALERT_ENABLED_STORAGE_KEY = "newsflash.alertEnabled.v1";
-const SCHEDULED_ALERT_ENABLED_STORAGE_KEY = "newsflash.scheduledAlertEnabled.v1";
-const RECENT_SCHEDULED_NEWS_STORAGE_KEY = "newsflash.recentScheduledNews.v1";
-const SAVED_SCHEDULED_NEWS_STORAGE_KEY = "newsflash.savedScheduledNews.v1";
-const RECENT_SCHEDULED_STOCK_STORAGE_KEY = "newsflash.recentScheduledStock.v1";
-const SAVED_SCHEDULED_STOCK_STORAGE_KEY = "newsflash.savedScheduledStock.v1";
+export type { ScheduledNewsAlertItem, ScheduledStockAlertItem } from "./lib/home-types";
 
-export interface ScheduledNewsAlertItem {
-  id: string;
-  timeTitle: string;
-  articles: Article[];
-  timestamp: string;
-}
-
-export interface ScheduledStockAlertItem {
-  id: string;
-  timeTitle: string;
-  content: string;
-  timestamp: string;
-}
-
-type RegionFilter = "전체" | "서울" | "경기도" | "부산";
-type DetailView = "속보" | "핵심 이슈" | "국제 뉴스" | "경제 뉴스" | "지역 이슈" | "보관함" | "알림 안내판";
-
-type EconomyIndicator = {
-  key: string;
-  label: string;
-  value: string;
-  change: string;
-  note: string;
-  status?: string;
-};
-
-type CompactMarketCard = {
-  label: string;
-  value: string;
-  change: string;
-  changeTone?: "up" | "down" | "neutral";
-};
-
-function MiniTrend({ tone = "neutral" }: { tone?: "up" | "down" | "neutral" }) {
-  const strokeColor =
-    tone === "down" ? "#2563eb" : tone === "up" ? "#ef4444" : "#94a3b8";
-  const fillColor =
-    tone === "down" ? "#eff6ff" : tone === "up" ? "#fef2f2" : "#f8fafc";
-  const points =
-    tone === "down"
-      ? "4,12 18,10 32,13 46,18 60,22 74,25"
-      : tone === "up"
-        ? "4,26 18,22 32,20 46,15 60,11 74,6"
-        : "4,17 18,17 32,17 46,17 60,17 74,17";
-
-  return (
-    <div className="flex h-[76px] items-center justify-center rounded-xl border border-slate-100 bg-slate-50 px-2">
-      <svg viewBox="0 0 78 32" className="h-11 w-full" aria-label="추이 그래프">
-        <rect x="0" y="0" width="78" height="32" rx="8" fill={fillColor} />
-        <path
-          d="M4 26 H74"
-          fill="none"
-          stroke="#e2e8f0"
-          strokeWidth="1"
-          strokeDasharray="3 4"
-        />
-        <polyline
-          points={points}
-          fill="none"
-          stroke={strokeColor}
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <circle cx="74" cy={tone === "down" ? "25" : tone === "up" ? "6" : "17"} r="3" fill={strokeColor} />
-      </svg>
-    </div>
-  );
-}
-
-type MarketItem = {
-  key: string;
-  label: string;
-  symbol: string;
-  value: string;
-  change: string;
-  changeRate: string;
-  status: string;
-  description: string;
-};
-
-interface Article {
-  title: string;
-  link: string;
-  pubDate: string;
-  description: string;
-  source: string;
-  imageUrl?: string;
-}
-
-interface Cartoon {
-  title: string;
-  imageUrl: string;
-  link: string;
-  source: string;
-  pubDate: string;
-}
-
-interface CommunityIssue {
-  id: string;
-  title: string;
-  link: string;
-  source: "클리앙" | "뽐뿌" | "무료앱";
-  pubDate: string;
-  summary: string;
-  detail: string;
-  category: string;
-}
-
-type SavedArticle = Article & {
-  savedAt: string;
-};
-
-type TranslationResult = {
-  titleKo: string;
-  summaryKo: string;
-  notice?: string;
-};
-
-type TranslationState = {
-  loading?: boolean;
-  error?: string;
-  result?: TranslationResult;
-};
-
-type IssueGroup = Article & {
-  issueKeyword: string;
-  relatedCount: number;
-  relatedSources: string[];
-  relatedArticles: Article[];
-  score?: number;
-};
-
-const ECONOMY_INDICATORS: EconomyIndicator[] = [
-  {
-    key: "kospi",
-    label: "KOSPI",
-    value: "준비 중",
-    change: "-",
-    note: "코스피 지수",
-  },
-  {
-    key: "kosdaq",
-    label: "KOSDAQ",
-    value: "준비 중",
-    change: "-",
-    note: "코스닥 지수",
-  },
-  {
-    key: "usdkrw",
-    label: "USD/KRW",
-    value: "준비 중",
-    change: "-",
-    note: "원/달러 환율",
-  },
-  {
-    key: "us-market",
-    label: "미국 증시",
-    value: "준비 중",
-    change: "-",
-    note: "DOW · NASDAQ · S&P500",
-  },
-  {
-    key: "rates",
-    label: "금리",
-    value: "준비 중",
-    change: "-",
-    note: "미국 기준금리 · 한국 기준금리 · 미국 10년물",
-  },
-];
-
-const REGION_KEYWORDS: Record<Exclude<RegionFilter, "전체">, string[]> = {
-  서울: [
-    "서울",
-    "강남",
-    "강북",
-    "마포",
-    "종로",
-    "용산",
-    "송파",
-    "서초",
-    "영등포",
-    "서울시",
-  ],
-  경기도: [
-    "경기",
-    "경기도",
-    "수원",
-    "성남",
-    "고양",
-    "용인",
-    "부천",
-    "안산",
-    "안양",
-    "화성",
-    "평택",
-    "의정부",
-    "파주",
-    "운정",
-  ],
-  부산: [
-    "부산",
-    "해운대",
-    "서면",
-    "남포동",
-    "부산항",
-    "기장",
-    "사하",
-    "수영",
-    "동래",
-    "강서구",
-    "대저동",
-    "대저1동",
-  ],
-};
-
-const ISSUE_GROUP_RULES = [
-  {
-    label: "환율·외환",
-    keywords: ["환율", "원달러", "원·달러", "달러", "외환", "강달러"],
-  },
-  {
-    label: "금리·물가",
-    keywords: [
-      "금리",
-      "기준금리",
-      "국채",
-      "물가",
-      "인플레이션",
-      "ECB",
-      "연준",
-      "Fed",
-    ],
-  },
-  {
-    label: "증시·주가",
-    keywords: [
-      "증시",
-      "주가",
-      "코스피",
-      "코스닥",
-      "나스닥",
-      "S&P",
-      "다우",
-      "상승",
-      "하락",
-    ],
-  },
-  {
-    label: "부동산·전세",
-    keywords: ["부동산", "아파트", "전세", "매매", "재건축", "분양"],
-  },
-  {
-    label: "정치·국회",
-    keywords: ["대통령", "국회", "정부", "장관", "정당", "선거", "의원"],
-  },
-  {
-    label: "사회·사건",
-    keywords: ["사고", "화재", "수사", "경찰", "검찰", "재판", "피해"],
-  },
-  {
-    label: "교통·파업",
-    keywords: ["파업", "노조", "교통", "지하철", "버스", "철도", "항공"],
-  },
-  {
-    label: "기후·재난",
-    keywords: ["폭염", "기후", "비상", "태풍", "호우", "산불", "재난"],
-  },
-  {
-    label: "의료·교육",
-    keywords: ["의료", "병원", "의대", "교육", "학교", "학생"],
-  },
-  {
-    label: "지역 이슈",
-    keywords: [
-      "서울",
-      "경기도",
-      "경기",
-      "부산",
-      "파주",
-      "운정",
-      "대저1동",
-      "대저동",
-    ],
-  },
-  {
-    label: "국제·안보",
-    keywords: [
-      "미국",
-      "중국",
-      "러시아",
-      "우크라이나",
-      "이스라엘",
-      "이란",
-      "전쟁",
-      "협상",
-    ],
-  },
-];
-
-
-const POLITICAL_DETAIL_RULES = [
-  {
-    label: "외교·정상회담",
-    keywords: ["정상회담", "시진핑", "트럼프", "미중", "미국", "중국", "외교", "관세", "무역", "회담", "협상"],
-  },
-  {
-    label: "정치·선거",
-    keywords: ["대선", "선거", "출마", "후보", "경선", "공천", "표심", "여론조사", "캠프", "선관위"],
-  },
-  {
-    label: "정치·정당",
-    keywords: ["민주당", "국민의힘", "국힘", "정당", "당대표", "비대위", "최고위원", "당원", "원내대표"],
-  },
-  {
-    label: "정치·국회",
-    keywords: ["국회", "국회의장", "의장", "국회의원", "의원", "상임위", "청문회", "법안", "본회의", "표결"],
-  },
-  {
-    label: "대통령·정부",
-    keywords: ["대통령", "대통령실", "정부", "장관", "국무총리", "총리", "국무회의", "행정부", "내각"],
-  },
-  {
-    label: "정치·수사재판",
-    keywords: ["특검", "검찰", "공수처", "수사", "재판", "구속", "기소", "압수수색", "탄핵", "영장"],
-  },
-];
-
-const POLITICAL_DETAIL_WEIGHTS: Record<string, number> = {
-  "외교·정상회담": 10,
-  "정치·선거": 9,
-  "정치·정당": 8,
-  "정치·국회": 8,
-  "대통령·정부": 8,
-  "정치·수사재판": 7,
-};
-
-
-function isPoliticalCategory(category: string) {
-  return (
-    category.startsWith("정치") ||
-    category === "대통령·정부" ||
-    category === "외교·정상회담"
-  );
-}
-
-const ISSUE_STOP_WORDS = new Set([
-  "속보",
-  "단독",
-  "종합",
-  "영상",
-  "사진",
-  "오늘",
-  "내일",
-  "이번",
-  "관련",
-  "기자",
-  "논란",
-  "가능성",
-  "확인",
-  "뉴스",
-  "발표",
-  "정부",
-  "대한",
-  "우리",
-  "한국",
-  "국내",
-  "현장",
-  "최신",
-  "주요",
-  "전체",
-  "첫",
-  "또",
-  "더",
-  "왜",
-  "새",
-]);
-
-const ISSUE_CATEGORY_WEIGHTS: Record<string, number> = {
-  "환율·외환": 9,
-  "금리·물가": 9,
-  "증시·주가": 8,
-  "국제·안보": 8,
-  "외교·정상회담": 9,
-  "정치·국회": 7,
-  "정치·선거": 9,
-  "정치·정당": 8,
-  "대통령·정부": 8,
-  "정치·수사재판": 7,
-  "사회·사건": 7,
-  "지역 이슈": 7,
-  "기후·재난": 7,
-  "교통·파업": 6,
-  "부동산·전세": 6,
-  "의료·교육": 5,
-};
-
-const POLITICAL_GENERIC_TOKENS = new Set([
-  "정치",
-  "국회",
-  "정부",
-  "대통령",
-  "대통령실",
-  "정당",
-  "의원",
-  "후보",
-  "대표",
-  "장관",
-  "관련",
-  "기사",
-  "뉴스",
-  "주요",
-  "국내",
-  "한국",
-]);
-
-const GENERAL_GENERIC_TOKENS = new Set([
-  "관련",
-  "기사",
-  "뉴스",
-  "주요",
-  "오늘",
-  "이번",
-  "한국",
-  "국내",
-  "전체",
-]);
-
-function getSpecificIssueTokens(tokens: string[], category: string) {
-  const blockList = isPoliticalCategory(category)
-    ? POLITICAL_GENERIC_TOKENS
-    : GENERAL_GENERIC_TOKENS;
-
-  return tokens
-    .filter((token) => token.length >= 2 && !blockList.has(token))
-    .slice(0, 6);
-}
-
-function buildIssueKeyword(category: string, tokens: string[]) {
-  const visibleTokens = getSpecificIssueTokens(tokens, category).slice(0, 3);
-
-  if (visibleTokens.length === 0) {
-    return category;
-  }
-
-  return `${category} · ${visibleTokens.join(" · ")}`;
-}
-
-function normalizeIssueText(text: string) {
-  return text
-    .replace(/<[^>]*>/g, " ")
-    .replace(/[\[\]【】()（）{}"'“”‘’·,./:!?\-_=+|\\]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function extractIssueTokens(article: Article) {
-  const text = normalizeIssueText(`${article.title} ${article.description}`);
-  const tokens = text.match(/[가-힣a-zA-Z0-9%]+/g) || [];
-  const tokenCounts = new Map<string, number>();
-
-  tokens.forEach((token) => {
-    const cleanToken = token.trim();
-
-    if (cleanToken.length < 2 || ISSUE_STOP_WORDS.has(cleanToken)) {
-      return;
-    }
-
-    tokenCounts.set(cleanToken, (tokenCounts.get(cleanToken) || 0) + 1);
-  });
-
-  ISSUE_GROUP_RULES.forEach((rule) => {
-    rule.keywords.forEach((keyword) => {
-      if (text.includes(keyword.toLowerCase())) {
-        tokenCounts.set(keyword, (tokenCounts.get(keyword) || 0) + 3);
-      }
-    });
-  });
-
-  POLITICAL_DETAIL_RULES.forEach((rule) => {
-    rule.keywords.forEach((keyword) => {
-      if (text.includes(keyword.toLowerCase())) {
-        tokenCounts.set(keyword, (tokenCounts.get(keyword) || 0) + 4);
-      }
-    });
-  });
-
-  return Array.from(tokenCounts.entries())
-    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
-    .map(([token]) => token)
-    .slice(0, 8);
-}
-
-function getIssueCategory(article: Article) {
-  const text = `${article.title} ${article.description}`.toLowerCase();
-
-  const politicalDetailMatches = POLITICAL_DETAIL_RULES.map((rule) => ({
-    label: rule.label,
-    count: rule.keywords.filter((keyword) =>
-      text.includes(keyword.toLowerCase()),
-    ).length,
-  }))
-    .filter((match) => match.count > 0)
-    .sort((a, b) => {
-      const weightDiff =
-        (POLITICAL_DETAIL_WEIGHTS[b.label] || 0) -
-        (POLITICAL_DETAIL_WEIGHTS[a.label] || 0);
-
-      if (weightDiff !== 0) {
-        return weightDiff;
-      }
-
-      return b.count - a.count;
-    });
-
-  if (politicalDetailMatches.length > 0) {
-    return politicalDetailMatches[0].label;
-  }
-
-  const matchedRule = ISSUE_GROUP_RULES.find((rule) =>
-    rule.keywords.some((keyword) => text.includes(keyword.toLowerCase())),
-  );
-
-  return matchedRule?.label || "주요 이슈";
-}
-
-function countTokenOverlap(a: string[], b: string[]) {
-  const bSet = new Set(b);
-  return a.filter((token) => bSet.has(token)).length;
-}
-
-function getRecencyScore(article: Article) {
-  const publishedTime = new Date(article.pubDate).getTime();
-
-  if (Number.isNaN(publishedTime)) {
-    return 0;
-  }
-
-  const diffHours = (Date.now() - publishedTime) / 3600000;
-
-  if (diffHours <= 1) {
-    return 8;
-  }
-
-  if (diffHours <= 3) {
-    return 6;
-  }
-
-  if (diffHours <= 6) {
-    return 4;
-  }
-
-  if (diffHours <= 12) {
-    return 2;
-  }
-
-  return 0;
-}
-
-function getIssueScore(
-  relatedArticles: Article[],
-  relatedSources: string[],
-  category: string,
-) {
-  const latestRecencyScore = Math.max(...relatedArticles.map(getRecencyScore), 0);
-  const categoryWeight = ISSUE_CATEGORY_WEIGHTS[category] || 4;
-
-  return (
-    relatedArticles.length * 10 +
-    relatedSources.length * 5 +
-    latestRecencyScore +
-    categoryWeight
-  );
-}
-
-function pickRepresentativeArticle(articles: Article[]) {
-  return [...articles].sort((a, b) => {
-    const aDescriptionScore = a.description ? 2 : 0;
-    const bDescriptionScore = b.description ? 2 : 0;
-    const aTitleScore = Math.min(a.title.length, 80) / 20;
-    const bTitleScore = Math.min(b.title.length, 80) / 20;
-    const aTime = new Date(a.pubDate).getTime() || 0;
-    const bTime = new Date(b.pubDate).getTime() || 0;
-
-    return (
-      bDescriptionScore + bTitleScore + getRecencyScore(b) + bTime / 1000000000000 -
-      (aDescriptionScore + aTitleScore + getRecencyScore(a) + aTime / 1000000000000)
-    );
-  })[0];
-}
-
-const DETAIL_VIEW_OPTIONS: DetailView[] = [
-  "속보",
-  "핵심 이슈",
-  "국제 뉴스",
-  "경제 뉴스",
-  "지역 이슈",
-  "보관함",
-  "알림 안내판",
-];
 
 export default function Home() {
   const [breakingNews, setBreakingNews] = useState<Article[]>([]);
@@ -655,13 +89,7 @@ export default function Home() {
   const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
   const [isEconomyNewsExpanded, setIsEconomyNewsExpanded] = useState(false);
 
-type PushSettings = {
-  alertEnabled: boolean;
-  scheduledAlertEnabled: boolean;
-  alertKeywords: string[];
-};
-
-  const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
+const [alertKeywords, setAlertKeywords] = useState<string[]>([]);
   const [alertEnabled, setAlertEnabled] = useState<boolean>(false);
   const [scheduledAlertEnabled, setScheduledAlertEnabled] = useState<boolean>(false);
 
@@ -671,6 +99,7 @@ type PushSettings = {
   const [pushReady, setPushReady] = useState<boolean | null>(null);
   const [pushConnectionMessage, setPushConnectionMessage] = useState<string>("");
   const [isConnectingPush, setIsConnectingPush] = useState(false);
+  const hasWebPushSubscriptionRef = useRef(false);
   const [keywordInput, setKeywordInput] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [recentScheduledNews, setRecentScheduledNews] = useState<ScheduledNewsAlertItem | null>(() => {
@@ -887,54 +316,19 @@ type PushSettings = {
 
   const refreshPushSubscriptionStatus = async () => {
     try {
-      const [subRes, statusRes] = await Promise.all([
-        fetch("/api/push-subscriptions", { cache: "no-store" }),
-        fetch("/api/push-status", { cache: "no-store" }),
-      ]);
+      const subRes = await fetch("/api/push-subscriptions", { cache: "no-store" });
       if (!subRes.ok) throw new Error(`구독 상태 조회 실패 (${subRes.status})`);
       const data = await subRes.json();
       const count = typeof data.count === "number" ? data.count : 0;
       setServerSubscriptionCount(count);
-
-      if (statusRes.ok) {
-        const status = await statusRes.json();
-        setCronSecretConfigured(Boolean(status.cronSecretConfigured));
-        setPushReady(Boolean(status.pushReady));
-      }
-
+      setCronSecretConfigured(Boolean(data.cronSecretConfigured));
+      setPushReady(Boolean(data.pushReady));
       return count;
     } catch (error) {
       console.error("구독 상태 조회 에러:", error);
       setServerSubscriptionCount(null);
       return null;
     }
-  };
-
-  const serializePushSubscription = (subscription: PushSubscription) => {
-    if (typeof subscription.toJSON === "function") {
-      return subscription.toJSON();
-    }
-
-    const p256dh = subscription.getKey("p256dh");
-    const auth = subscription.getKey("auth");
-    if (!p256dh || !auth) {
-      throw new Error("푸시 구독 키 정보가 없습니다.");
-    }
-
-    const encodeKey = (buffer: ArrayBuffer) =>
-      btoa(String.fromCharCode(...new Uint8Array(buffer)))
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/, "");
-
-    return {
-      endpoint: subscription.endpoint,
-      expirationTime: subscription.expirationTime,
-      keys: {
-        p256dh: encodeKey(p256dh),
-        auth: encodeKey(auth),
-      },
-    };
   };
 
   const syncPushPreferences = async (
@@ -957,6 +351,7 @@ type PushSettings = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           endpoint: activeSubscription.endpoint,
+          keys: serializePushSubscription(activeSubscription).keys,
           alertEnabled: effectiveSettings.alertEnabled,
           scheduledAlertEnabled: effectiveSettings.scheduledAlertEnabled,
           alertKeywords: effectiveSettings.alertKeywords,
@@ -1116,11 +511,26 @@ type PushSettings = {
       }
 
       const latestCount = await refreshPushSubscriptionStatus();
-      const testRes = await fetch("/api/send-scheduled-push?force=true&test=true", {
-        cache: "no-store",
-      });
-      const testData = await testRes.json().catch(() => ({}));
-      const sentCount = typeof testData.sentCount === "number" ? testData.sentCount : 0;
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      let sentCount = 0;
+      let testData: { message?: string } = {};
+
+      if (subscription) {
+        const testRes = await fetch("/api/push-self-test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({
+            subscription: serializePushSubscription(subscription),
+          }),
+        });
+        testData = await testRes.json().catch(() => ({}));
+        sentCount =
+          testRes.ok && typeof (testData as { sentCount?: number }).sentCount === "number"
+            ? (testData as { sentCount: number }).sentCount
+            : 0;
+      }
       const countLabel = latestCount ?? "?";
 
       if ((latestCount ?? 0) < 1) {
@@ -1161,12 +571,13 @@ type PushSettings = {
       const subscription = await registration.pushManager.getSubscription();
 
       if (subscription) {
-        // 1. 서버 측 구독 데이터 삭제
+        // 1. 서버 측 구독 데이터 삭제 (소유권 증명용 keys 포함)
         await fetch("/api/push-subscriptions", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             endpoint: subscription.endpoint,
+            keys: serializePushSubscription(subscription).keys,
           }),
         });
 
@@ -1741,6 +1152,24 @@ type PushSettings = {
   }, [marketData]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+
+    const refreshWebPushFlag = async () => {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        hasWebPushSubscriptionRef.current = Boolean(subscription);
+      } catch {
+        hasWebPushSubscriptionRef.current = false;
+      }
+    };
+
+    refreshWebPushFlag();
+    const timer = window.setInterval(refreshWebPushFlag, 60_000);
+    return () => window.clearInterval(timer);
+  }, [scheduledAlertEnabled, serverSubscriptionCount]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
 
     const checkScheduledAlerts = () => {
@@ -1757,6 +1186,8 @@ type PushSettings = {
       const timeStr = `${hours}:${String(minutes).padStart(2, "0")}`;
       const dateStr = `${year}-${month}-${date}`;
       const hourSlot = `${hours}:00`;
+      // Prefer server Web Push when subscribed to avoid duplicate popups.
+      const useClientPopup = !hasWebPushSubscriptionRef.current;
 
       // 1. 정기 뉴스 알림 (07:00 ~ 23:00, KST 해당 시간대 1회)
       const newsHours = ["07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
@@ -1769,26 +1200,28 @@ type PushSettings = {
           const title = `📰 [정기 뉴스 알림] ${hours}시 최신 뉴스 5선`;
           const body = top5.map((art, idx) => `${idx + 1}. ${art.title}`).join("\n");
           
-          try {
-            const notification = new Notification(title, {
-              body,
-              icon: top5[0]?.imageUrl || "/icons/icon-192.png",
-              tag: alertKey,
-              data: {
-                url: "/?view=alerts&focus=news#recent-scheduled-alerts",
-                focus: "news",
-              },
-            });
-            notification.onclick = () => {
-              window.focus();
-              openAlertBoard({
-                focus: "news",
-                title,
-                articles: top5,
+          if (useClientPopup) {
+            try {
+              const notification = new Notification(title, {
+                body,
+                icon: top5[0]?.imageUrl || "/icons/icon-192.png",
+                tag: alertKey,
+                data: {
+                  url: "/?view=alerts&focus=news#recent-scheduled-alerts",
+                  focus: "news",
+                },
               });
-            };
-          } catch (e) {
-            console.error("정기 뉴스 알림 발송 실패:", e);
+              notification.onclick = () => {
+                window.focus();
+                openAlertBoard({
+                  focus: "news",
+                  title,
+                  articles: top5,
+                });
+              };
+            } catch (e) {
+              console.error("정기 뉴스 알림 발송 실패:", e);
+            }
           }
           triggerScheduledNewsRecord(title, top5);
         }
@@ -1828,26 +1261,28 @@ type PushSettings = {
             ].join("\n");
           }
 
-          try {
-            const notification = new Notification(title, {
-              body,
-              icon: "/icons/icon-192.png",
-              tag: alertKey,
-              data: {
-                url: "/?view=alerts&focus=stock#recent-scheduled-alerts",
-                focus: "stock",
-              },
-            });
-            notification.onclick = () => {
-              window.focus();
-              openAlertBoard({
-                focus: "stock",
-                title,
+          if (useClientPopup) {
+            try {
+              const notification = new Notification(title, {
                 body,
+                icon: "/icons/icon-192.png",
+                tag: alertKey,
+                data: {
+                  url: "/?view=alerts&focus=stock#recent-scheduled-alerts",
+                  focus: "stock",
+                },
               });
-            };
-          } catch (e) {
-            console.error("정기 증시 알림 발송 실패:", e);
+              notification.onclick = () => {
+                window.focus();
+                openAlertBoard({
+                  focus: "stock",
+                  title,
+                  body,
+                });
+              };
+            } catch (e) {
+              console.error("정기 증시 알림 발송 실패:", e);
+            }
           }
           triggerScheduledStockRecord(title, body);
         }
@@ -3337,18 +2772,8 @@ type PushSettings = {
                               { title: "샘플 속보 기사 2: 글로벌 증시 반등 흐름", link: "https://example.com", pubDate: new Date().toISOString(), description: "증시 설명", source: "SBS" },
                             ]);
                             triggerScheduledStockRecord(sampleStockTitle, sampleStockContent);
-                            
-                            // 백엔드 백그라운드 웹 푸시 알림 즉시 발송 테스트
-                            fetch("/api/send-scheduled-push?force=true&test=true")
-                              .then(res => res.json())
-                              .then(data => {
-                                console.log("백엔드 웹 푸시 발송 성공:", data);
-                              })
-                              .catch(err => {
-                                console.error("백엔드 웹 푸시 발송 에러:", err);
-                              });
 
-                            alert("가상 정기 알림 1회가 로컬 기록으로 저장되었습니다. 정기알림 상태가 ON인 경우, 잠시 후 백그라운드 푸시 팝업이 발송됩니다!");
+                            alert("가상 정기 알림 1회가 로컬 기록으로 저장되었습니다. (전체 구독자 푸시 테스트는 비활성화됨)");
                           }}
                           className="px-3.5 py-1.5 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 text-xs font-bold transition cursor-pointer whitespace-nowrap"
                         >

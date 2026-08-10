@@ -1,33 +1,15 @@
 import { NextResponse } from 'next/server';
-import Parser from 'rss-parser';
+import {
+  cleanDescription,
+  createRssParser,
+  extractImageUrl,
+  fetchText,
+  makeAbsoluteUrl,
+  withTtlCache,
+  type RSSItem,
+} from '@/lib/rss';
 
 type NewsCategory = '국내' | '국제';
-
-type RSSMediaObject = {
-  $?: {
-    url?: string;
-  };
-  url?: string;
-};
-
-type RSSEnclosure = {
-  url?: string;
-  type?: string;
-};
-
-type RSSItem = {
-  title?: string;
-  link?: string;
-  pubDate?: string;
-  isoDate?: string;
-  contentSnippet?: string;
-  content?: string;
-  description?: string;
-  media?: RSSMediaObject | RSSMediaObject[];
-  thumbnail?: RSSMediaObject | RSSMediaObject[] | string;
-  enclosure?: RSSEnclosure;
-  contentEncoded?: string;
-};
 
 interface Article {
   title: string;
@@ -49,18 +31,10 @@ interface RSSFeedConfig {
 const BREAKING_MAX_AGE_HOURS = 12;
 const YTN_RECENT_LIMIT = 8;
 const YTN_MAX_AGE_HOURS = 12;
+const BREAKING_CACHE_TTL_MS = 60_000;
+const BREAKING_CACHE_CONTROL = 'public, s-maxage=60, stale-while-revalidate=30';
 
-const parser: Parser<object, RSSItem> = new Parser<object, RSSItem>({
-  customFields: {
-    item: [
-      ['media:content', 'media'],
-      ['media:thumbnail', 'thumbnail'],
-      ['description', 'description'],
-      ['content:encoded', 'contentEncoded'],
-      ['enclosure', 'enclosure']
-    ]
-  }
-});
+const parser = createRssParser();
 
 const RSS_FEEDS: RSSFeedConfig[] = [
   {
@@ -139,12 +113,6 @@ const RSS_FEEDS: RSSFeedConfig[] = [
 
 const YTN_RECENT_URL = 'https://www.ytn.co.kr/news/list.php?mcd=recentnews';
 
-const FETCH_HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-};
-
 const YTN_EXCLUDED_TITLE_KEYWORDS = [
   '나이트포커스',
   '이게웬날리',
@@ -181,129 +149,6 @@ const YTN_EXCLUDED_LINK_KEYWORDS = [
   'radio',
   'weather'
 ];
-
-function extractImageUrl(item: RSSItem): string | undefined {
-  try {
-    if (item.media) {
-      if (Array.isArray(item.media)) {
-        for (const mediaItem of item.media) {
-          if (mediaItem.$?.url) {
-            return mediaItem.$.url;
-          }
-
-          if (mediaItem.url) {
-            return mediaItem.url;
-          }
-        }
-      } else {
-        if (item.media.$?.url) {
-          return item.media.$.url;
-        }
-
-        if (item.media.url) {
-          return item.media.url;
-        }
-      }
-    }
-
-    if (item.thumbnail) {
-      if (typeof item.thumbnail === 'string') {
-        return item.thumbnail;
-      }
-
-      if (Array.isArray(item.thumbnail)) {
-        for (const thumbnailItem of item.thumbnail) {
-          if (thumbnailItem.$?.url) {
-            return thumbnailItem.$.url;
-          }
-
-          if (thumbnailItem.url) {
-            return thumbnailItem.url;
-          }
-        }
-      } else {
-        if (item.thumbnail.$?.url) {
-          return item.thumbnail.$.url;
-        }
-
-        if (item.thumbnail.url) {
-          return item.thumbnail.url;
-        }
-      }
-    }
-
-    if (item.enclosure?.url) {
-      if (item.enclosure.type?.startsWith('image/')) {
-        return item.enclosure.url;
-      }
-
-      if (item.enclosure.url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-        return item.enclosure.url;
-      }
-    }
-
-    if (item.contentEncoded) {
-      const imgMatch = item.contentEncoded.match(/<img[^>]+src=["']([^"']+)["']/i);
-
-      if (imgMatch?.[1]) {
-        return imgMatch[1];
-      }
-    }
-
-    if (item.description) {
-      const imgMatch = item.description.match(/<img[^>]+src=["']([^"']+)["']/i);
-
-      if (imgMatch?.[1]) {
-        return imgMatch[1];
-      }
-    }
-
-    if (item.content) {
-      const imgMatch = item.content.match(/<img[^>]+src=["']([^"']+)["']/i);
-
-      if (imgMatch?.[1]) {
-        return imgMatch[1];
-      }
-    }
-  } catch (error) {
-    console.error('속보 이미지 추출 실패:', error);
-  }
-
-  return undefined;
-}
-
-function cleanDescription(description: string): string {
-  if (!description) {
-    return '내용 없음';
-  }
-
-  let cleaned = description
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]*>/g, ' ');
-
-  cleaned = cleaned
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&apos;/g, "'");
-
-  cleaned = cleaned.replace(/\s+/g, ' ').trim();
-
-  if (!cleaned) {
-    return '내용 없음';
-  }
-
-  if (cleaned.length > 180) {
-    return `${cleaned.substring(0, 180)}...`;
-  }
-
-  return cleaned;
-}
 
 function cleanTitle(title: string): string {
   return cleanDescription(title)
@@ -430,35 +275,6 @@ async function fetchRSSFeed({
     console.error(`RSS 피드 가져오기 실패 (${source}):`, error);
     return [];
   }
-}
-
-async function fetchText(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const response = await fetch(url, {
-      headers: FETCH_HEADERS,
-      signal: controller.signal,
-      cache: 'no-store'
-    });
-
-    if (!response.ok) {
-      throw new Error(`요청 실패: ${response.status}`);
-    }
-
-    return await response.text();
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-function makeAbsoluteUrl(baseUrl: string, href: string): string {
-  if (href.startsWith('http://') || href.startsWith('https://')) {
-    return href;
-  }
-
-  return new URL(href, baseUrl).toString();
 }
 
 function parseYtnDateFromLink(link: string): string | undefined {
@@ -713,45 +529,55 @@ function createCategoryStats(articles: Article[]): Record<NewsCategory, number> 
   );
 }
 
-export async function GET() {
-  try {
-    const results = await Promise.allSettled([
-      ...RSS_FEEDS.map((feed) => fetchRSSFeed(feed)),
-      fetchYtnRecentNews()
-    ]);
+async function aggregateBreakingNews() {
+  const results = await Promise.allSettled([
+    ...RSS_FEEDS.map((feed) => fetchRSSFeed(feed)),
+    fetchYtnRecentNews()
+  ]);
 
-    const allArticles = results.flatMap((result) => {
-      if (result.status === 'fulfilled') {
-        return result.value;
+  const allArticles = results.flatMap((result) => {
+    if (result.status === 'fulfilled') {
+      return result.value;
+    }
+
+    return [];
+  });
+
+  const errors = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => {
+      if (result.status === 'rejected') {
+        return String(result.reason);
       }
 
-      return [];
-    });
+      return '';
+    })
+    .filter(Boolean);
 
-    const errors = results
-      .filter((result) => result.status === 'rejected')
-      .map((result) => {
-        if (result.status === 'rejected') {
-          return String(result.reason);
-        }
+  const uniqueArticles = removeDuplicateArticles(allArticles);
+  const articles = sortByLatestFirst(uniqueArticles);
+  const sourceStats = createSourceStats(articles);
+  const categoryStats = createCategoryStats(articles);
 
-        return '';
-      })
-      .filter(Boolean);
+  return {
+    articles,
+    lastUpdated: new Date().toISOString(),
+    totalCount: articles.length,
+    sourceStats,
+    categoryStats,
+    sources: Object.keys(sourceStats),
+    errors: errors.length > 0 ? errors : undefined
+  };
+}
 
-    const uniqueArticles = removeDuplicateArticles(allArticles);
-    const articles = sortByLatestFirst(uniqueArticles);
-    const sourceStats = createSourceStats(articles);
-    const categoryStats = createCategoryStats(articles);
+export async function GET() {
+  try {
+    const payload = await withTtlCache('breaking-news', BREAKING_CACHE_TTL_MS, aggregateBreakingNews);
 
-    return NextResponse.json({
-      articles,
-      lastUpdated: new Date().toISOString(),
-      totalCount: articles.length,
-      sourceStats,
-      categoryStats,
-      sources: Object.keys(sourceStats),
-      errors: errors.length > 0 ? errors : undefined
+    return NextResponse.json(payload, {
+      headers: {
+        'Cache-Control': BREAKING_CACHE_CONTROL
+      }
     });
   } catch (error) {
     console.error('속보 API 에러:', error);
@@ -769,4 +595,3 @@ export async function GET() {
 }
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;

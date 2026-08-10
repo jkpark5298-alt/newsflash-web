@@ -186,14 +186,13 @@ function buildKeywordNotifications(
 
 export async function GET(request: Request) {
   try {
+    if (!isCronAuthorized(request)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const force = searchParams.get("force") === "true";
     const test = searchParams.get("test") === "true";
-    const isManualTest = force && test;
-
-    if (!isManualTest && !isCronAuthorized(request)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
 
     const { hours, minutes, timeStr, dateStr } = getKstTimeParts();
     const hourSlot = `${String(hours).padStart(2, "0")}:00`;

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
+import { fetchText, makeAbsoluteUrl, withTtlCache } from '@/lib/rss';
 
 type CommunitySource = '클리앙' | '뽐뿌' | '무료앱';
 
@@ -24,6 +25,9 @@ type CustomRSSItem = {
   description?: string;
 };
 
+const COMMUNITY_CACHE_TTL_MS = 60_000;
+const COMMUNITY_CACHE_CONTROL = 'public, s-maxage=60, stale-while-revalidate=30';
+
 const parser: Parser<object, CustomRSSItem> = new Parser<object, CustomRSSItem>({
   customFields: {
     item: [
@@ -32,12 +36,6 @@ const parser: Parser<object, CustomRSSItem> = new Parser<object, CustomRSSItem>(
     ],
   },
 });
-
-const FETCH_HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-};
 
 function cleanText(value: string): string {
   return value
@@ -67,35 +65,6 @@ function limitText(value: string, maxLength: number): string {
 
 function makeId(source: CommunitySource, link: string, title: string): string {
   return `${source}-${link || title}`.replace(/\s+/g, '-');
-}
-
-function makeAbsoluteUrl(baseUrl: string, href: string): string {
-  if (href.startsWith('http://') || href.startsWith('https://')) {
-    return href;
-  }
-
-  return new URL(href, baseUrl).toString();
-}
-
-async function fetchText(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const response = await fetch(url, {
-      headers: FETCH_HEADERS,
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-
-    if (!response.ok) {
-      throw new Error(`요청 실패: ${response.status}`);
-    }
-
-    return await response.text();
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 async function fetchPpomppuRSS(): Promise<CommunityIssue[]> {
@@ -301,38 +270,52 @@ function removeDuplicateIssues(issues: CommunityIssue[]): CommunityIssue[] {
   });
 }
 
+async function aggregateCommunityIssues() {
+  const results = await Promise.allSettled([
+    fetchClienBoard('https://www.clien.net/service/board/park', '모두의공원', 8),
+    fetchClienBoard('https://www.clien.net/service/board/jirum', '알뜰구매', 8),
+    fetchClienBoard('https://www.clien.net/service/board/news', '새로운소식', 8),
+    fetchIphoneFreeApps(),
+    fetchPpomppuRSS(),
+    fetchPpomppuHot(),
+  ]);
+
+  const issues = results.flatMap((result) => {
+    if (result.status === 'fulfilled') {
+      return result.value;
+    }
+
+    return [];
+  });
+
+  const uniqueIssues = removeDuplicateIssues(issues).slice(0, 45);
+
+  const sourceStats = uniqueIssues.reduce<Record<string, number>>((acc, issue) => {
+    acc[issue.source] = (acc[issue.source] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    issues: uniqueIssues,
+    totalCount: uniqueIssues.length,
+    sourceStats,
+    lastUpdated: new Date().toISOString(),
+    notice: '커뮤니티 이슈는 검증된 뉴스가 아닌 이용자 반응 기반 정보입니다.',
+  };
+}
+
 export async function GET() {
   try {
-    const results = await Promise.allSettled([
-      fetchClienBoard('https://www.clien.net/service/board/park', '모두의공원', 8),
-      fetchClienBoard('https://www.clien.net/service/board/jirum', '알뜰구매', 8),
-      fetchClienBoard('https://www.clien.net/service/board/news', '새로운소식', 8),
-      fetchIphoneFreeApps(),
-      fetchPpomppuRSS(),
-      fetchPpomppuHot(),
-    ]);
+    const payload = await withTtlCache(
+      'community-issues',
+      COMMUNITY_CACHE_TTL_MS,
+      aggregateCommunityIssues,
+    );
 
-    const issues = results.flatMap((result) => {
-      if (result.status === 'fulfilled') {
-        return result.value;
-      }
-
-      return [];
-    });
-
-    const uniqueIssues = removeDuplicateIssues(issues).slice(0, 45);
-
-    const sourceStats = uniqueIssues.reduce<Record<string, number>>((acc, issue) => {
-      acc[issue.source] = (acc[issue.source] || 0) + 1;
-      return acc;
-    }, {});
-
-    return NextResponse.json({
-      issues: uniqueIssues,
-      totalCount: uniqueIssues.length,
-      sourceStats,
-      lastUpdated: new Date().toISOString(),
-      notice: '커뮤니티 이슈는 검증된 뉴스가 아닌 이용자 반응 기반 정보입니다.',
+    return NextResponse.json(payload, {
+      headers: {
+        'Cache-Control': COMMUNITY_CACHE_CONTROL,
+      },
     });
   } catch (error) {
     console.error('커뮤니티 API 에러:', error);
@@ -350,4 +333,3 @@ export async function GET() {
 }
 
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;

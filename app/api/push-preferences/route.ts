@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  findOwnedSubscription,
   getSubscriptions,
   saveSubscriptions,
   type PushSubscriptionRecord,
@@ -9,6 +10,7 @@ export async function POST(request: Request) {
   try {
     const {
       endpoint,
+      keys,
       alertEnabled,
       scheduledAlertEnabled,
       alertKeywords,
@@ -18,6 +20,28 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "endpoint가 필요합니다." },
         { status: 400 },
+      );
+    }
+
+    if (!keys?.p256dh || !keys?.auth) {
+      return NextResponse.json(
+        { error: "구독 keys(p256dh/auth)가 필요합니다." },
+        { status: 400 },
+      );
+    }
+
+    const owned = await findOwnedSubscription(endpoint, {
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+    });
+
+    if (!owned) {
+      return NextResponse.json(
+        {
+          error:
+            "구독 소유권을 확인할 수 없습니다. 알림을 다시 켜 주세요.",
+        },
+        { status: 403 },
       );
     }
 

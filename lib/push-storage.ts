@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -55,11 +56,16 @@ function getStoragePaths() {
 
 const paths = getStoragePaths();
 
-const FALLBACK_VAPID: VapidKeys = {
-  publicKey:
-    "BEz2zU5aC4Y9I3db36cbfDTs9NIGU-MO519Z1uZ9otB6iVASbye7t2DRoAtyxDr_RboLiCafBwvhuJE16VuZRyA",
-  privateKey: "CywyVvP9ZCWyqIqvYeR8UPmWTTwjh5YlihITsSTadq4",
-};
+function isProductionRuntime() {
+  return process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
 
 function getDatabaseUrl(): string | undefined {
   return (
@@ -292,34 +298,48 @@ export function getVapidKeys(): VapidKeys {
     return cachedVapidKeys;
   }
 
-  if (fs.existsSync(paths.vapidKeys)) {
+  // Local-only convenience: never fall back to committed keys.
+  if (!isProductionRuntime() && fs.existsSync(paths.vapidKeys)) {
     try {
-      cachedVapidKeys = JSON.parse(fs.readFileSync(paths.vapidKeys, "utf-8"));
-      return cachedVapidKeys!;
+      const fromFile = JSON.parse(
+        fs.readFileSync(paths.vapidKeys, "utf-8"),
+      ) as VapidKeys;
+      if (fromFile?.publicKey && fromFile?.privateKey) {
+        cachedVapidKeys = fromFile;
+        return cachedVapidKeys;
+      }
     } catch {
       /* fall through */
     }
   }
 
-  cachedVapidKeys = FALLBACK_VAPID;
-  try {
-    if (!fs.existsSync(paths.dir)) {
-      fs.mkdirSync(paths.dir, { recursive: true });
-    }
-    fs.writeFileSync(
-      paths.vapidKeys,
-      JSON.stringify(cachedVapidKeys, null, 2),
-      "utf-8",
-    );
-  } catch {
-    /* read-only env */
-  }
-
-  return cachedVapidKeys;
+  throw new Error(
+    "VAPID keys missing. Set VAPID_PRIVATE_KEY and NEXT_PUBLIC_VAPID_PUBLIC_KEY (or VAPID_PUBLIC_KEY).",
+  );
 }
 
 export function getVapidPublicKey(): string {
   return getVapidKeys().publicKey;
+}
+
+export async function findOwnedSubscription(
+  endpoint: string,
+  keys: { p256dh: string; auth: string },
+): Promise<PushSubscriptionRecord | null> {
+  if (!endpoint || !keys?.p256dh || !keys?.auth) return null;
+
+  const subscriptions = await getSubscriptions();
+  const match = subscriptions.find((sub) => sub.endpoint === endpoint);
+  if (!match?.keys?.p256dh || !match?.keys?.auth) return null;
+
+  if (
+    !safeEqual(match.keys.p256dh, keys.p256dh) ||
+    !safeEqual(match.keys.auth, keys.auth)
+  ) {
+    return null;
+  }
+
+  return match;
 }
 
 export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
@@ -488,7 +508,11 @@ export function matchesKeyword(text: string, keyword: string): boolean {
 
 export function isCronAuthorized(request: Request): boolean {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true;
+
+  // Fail closed in deployed/production environments.
+  if (!cronSecret) {
+    return !isProductionRuntime();
+  }
 
   const authHeader = request.headers.get("authorization");
   if (authHeader === `Bearer ${cronSecret}`) return true;
@@ -496,9 +520,7 @@ export function isCronAuthorized(request: Request): boolean {
   const cronHeader = request.headers.get("x-cron-secret");
   if (cronHeader === cronSecret) return true;
 
-  const url = new URL(request.url);
-  if (url.searchParams.get("secret") === cronSecret) return true;
-
+  // Query-string secrets leak via logs/Referer — reject them.
   return false;
 }
 
