@@ -15,6 +15,7 @@ import {
   insertClipHtml,
   loadNewsClips,
   normalizeClipUrl,
+  publishNewsClipIndex,
   readClipboardImages,
   remainingDays,
   sanitizeClipHtml,
@@ -38,10 +39,12 @@ function ClipHtml({ html, className }: { html: string; className?: string }) {
 export default function NewsClipBoard({
   active,
   openSession,
+  focusClipId,
   onClose,
 }: {
   active: boolean;
   openSession: number;
+  focusClipId?: string | null;
   onClose: () => void;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -49,6 +52,8 @@ export default function NewsClipBoard({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingHtmlRef = useRef("");
   const openSessionRef = useRef(0);
+  const indexSyncedRef = useRef(false);
+  const [clipsReady, setClipsReady] = useState(false);
   const [mode, setMode] = useState<BoardMode>("edit");
   const [clips, setClips] = useState<NewsClip[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -74,6 +79,18 @@ export default function NewsClipBoard({
   async function refresh(showExpiryNotice = false) {
     const result = await loadNewsClips();
     setClips(result.clips);
+    setClipsReady(true);
+    if (!indexSyncedRef.current) {
+      indexSyncedRef.current = true;
+      void publishNewsClipIndex(
+        result.clips.map((clip) => ({
+          id: clip.id,
+          title: clip.title,
+          createdAt: clip.createdAt,
+          deleted: false,
+        })),
+      );
+    }
     if (showExpiryNotice && result.removedCount > 0) {
       setNotice(`30일이 지난 ${result.removedCount}건을 삭제했습니다.`);
     }
@@ -86,6 +103,18 @@ export default function NewsClipBoard({
       .then((result) => {
         if (cancelled) return;
         setClips(result.clips);
+        setClipsReady(true);
+        if (!indexSyncedRef.current) {
+          indexSyncedRef.current = true;
+          void publishNewsClipIndex(
+            result.clips.map((clip) => ({
+              id: clip.id,
+              title: clip.title,
+              createdAt: clip.createdAt,
+              deleted: false,
+            })),
+          );
+        }
         if (result.removedCount > 0) {
           setNotice(`30일이 지난 ${result.removedCount}건을 삭제했습니다.`);
         }
@@ -112,6 +141,39 @@ export default function NewsClipBoard({
     openSessionRef.current = openSession;
     setMode("edit");
   }, [openSession]);
+
+  useEffect(() => {
+    if (!focusClipId || !clipsReady) return;
+    setMode("index");
+    const found = clips.some((clip) => clip.id === focusClipId);
+    if (found) {
+      window.setTimeout(() => {
+        document.getElementById(`news-clip-${focusClipId}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 50);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/news-clip-index", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data: { items?: { id?: string; deleted?: boolean }[] }) => {
+        if (cancelled) return;
+        const row = (data.items || []).find((item) => item.id === focusClipId);
+        setNotice(
+          row?.deleted
+            ? "일기장에서 연 이 뉴스는 삭제되어 본문이 없습니다."
+            : "이 기기에서 해당 뉴스 본문을 찾지 못했습니다.",
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setNotice("이 기기에서 해당 뉴스 본문을 찾지 못했습니다.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clips, clipsReady, focusClipId]);
 
   useEffect(() => {
     if (mode !== "edit") return;
@@ -225,6 +287,14 @@ export default function NewsClipBoard({
         permanent,
       };
       await saveNewsClip(clip);
+      const sent = await publishNewsClipIndex([
+        {
+          id: clip.id,
+          title: clip.title,
+          createdAt: clip.createdAt,
+          deleted: false,
+        },
+      ]);
       await refresh(false);
       pendingHtmlRef.current = "";
       setEditingId(null);
@@ -232,10 +302,13 @@ export default function NewsClipBoard({
       setUrl("");
       setPermanent(false);
       setMode("index");
+      const diaryNote = sent
+        ? "일기장 정보 인덱스에는 일자, 제목, NEWS로 보냈습니다."
+        : "일기장 정보 인덱스에는 보내지 못했습니다.";
       setNotice(
         permanent
-          ? "별표로 영구 보관하고 일기 인덱스에 보냈습니다. 목록에 계속 남습니다."
-          : "이 기기에 저장하고 일기 인덱스로 보냈습니다. 30일 후 자동으로 삭제됩니다.",
+          ? `별표로 영구 보관했습니다. 목록에 계속 남습니다. ${diaryNote}`
+          : `이 기기에 저장했습니다. 30일 후 자동으로 삭제됩니다. ${diaryNote}`,
       );
     } catch {
       setNotice("저장에 실패했습니다. 이미지 용량을 줄여 다시 시도해 주세요.");
@@ -260,11 +333,26 @@ export default function NewsClipBoard({
   }
 
   async function handleDelete(id: string) {
-    const confirmed = window.confirm("이 저장 글을 삭제할까요?");
+    const clip = clips.find((item) => item.id === id);
+    const confirmed = window.confirm("이 저장 글을 삭제할까요? 일기장에는 삭제됨으로 남습니다.");
     if (!confirmed) return;
     await deleteNewsClip(id);
+    const sent = clip
+      ? await publishNewsClipIndex([
+          {
+            id: clip.id,
+            title: clip.title,
+            createdAt: clip.createdAt,
+            deleted: true,
+          },
+        ])
+      : false;
     await refresh(false);
-    setNotice("인덱스에서 삭제했습니다.");
+    setNotice(
+      sent
+        ? "본문을 삭제했습니다. 일기장 정보 인덱스에는 삭제됨으로 표시됩니다."
+        : "이 앱에서는 삭제했습니다. 일기장 삭제 표시는 보내지 못했습니다.",
+    );
   }
 
   async function handleExport() {
@@ -553,6 +641,7 @@ export default function NewsClipBoard({
               {visibleClips.map((clip) => (
                 <article
                   key={clip.id}
+                  id={`news-clip-${clip.id}`}
                   className="rounded-2xl border border-gray-100 p-4 shadow-sm"
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">

@@ -78,6 +78,7 @@ export default function Home() {
     useState<DetailView | null>(null);
   const [newsClipOpen, setNewsClipOpen] = useState(false);
   const [newsClipSession, setNewsClipSession] = useState(0);
+  const [focusClipId, setFocusClipId] = useState<string | null>(null);
   const [savedArticles, setSavedArticles] = useState<SavedArticle[]>(() => {
     if (typeof window === "undefined") {
       return [];
@@ -633,6 +634,13 @@ export default function Home() {
       console.error("백그라운드 웹 푸시 해제 에러:", e);
     }
   };
+
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("clip");
+    if (!id) return;
+    setFocusClipId(id);
+    setNewsClipOpen(true);
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -2259,6 +2267,7 @@ export default function Home() {
           <NewsClipBoard
             active={newsClipOpen}
             openSession={newsClipSession}
+            focusClipId={focusClipId}
             onClose={() => setNewsClipOpen(false)}
           />
         </section>

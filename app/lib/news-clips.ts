@@ -415,6 +415,27 @@ export async function deleteNewsClip(id: string): Promise<void> {
   }
 }
 
+export type NewsClipIndexPayload = {
+  id: string;
+  title: string;
+  createdAt: string;
+  deleted: boolean;
+};
+
+export async function publishNewsClipIndex(items: NewsClipIndexPayload[]): Promise<boolean> {
+  if (items.length === 0) return true;
+  try {
+    const response = await fetch("/api/news-clip-index", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function saveNewsClipFile(clips: NewsClip[]): Promise<void> {
   const payload: NewsClipFile = {
     version: CLIP_FILE_VERSION,
