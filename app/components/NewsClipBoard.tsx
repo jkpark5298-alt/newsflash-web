@@ -5,11 +5,13 @@ import {
   applyClipFormat,
   clipHasImage,
   clipPlainText,
+  clipTextLines,
   compressClipHtml,
   createClipExpiry,
   deleteNewsClip,
-  deriveClipTitle,
   extractUrls,
+  legacyAutoTitle,
+  lookupArticleTitle,
   imageFileToDataUrl,
   importNewsClipFile,
   insertClipHtml,
@@ -18,6 +20,7 @@ import {
   publishNewsClipIndex,
   readClipboardImages,
   remainingDays,
+  resolveClipTitle,
   sanitizeClipHtml,
   saveNewsClip,
   saveNewsClipFile,
@@ -26,6 +29,53 @@ import {
 } from "../lib/news-clips";
 
 type BoardMode = "edit" | "index";
+
+const MAX_SUMMARY_LENGTH = 4000;
+
+function clipDateLabel(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function clipShareText(clip: NewsClip): string {
+  const head = [clip.title.trim(), clipDateLabel(clip.createdAt), clip.url.trim()]
+    .filter(Boolean)
+    .join("\n");
+  const summary = clip.summary?.trim() ?? "";
+  const body = clipTextLines(clip.html).join("\n");
+  return [head, summary, body].filter(Boolean).join("\n\n");
+}
+
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Some browsers reject the async clipboard API even after a click.
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "0";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
 
 function ClipHtml({ html, className }: { html: string; className?: string }) {
   return (
@@ -65,6 +115,20 @@ export default function NewsClipBoard({
   const [busy, setBusy] = useState(false);
   const [starOnly, setStarOnly] = useState(false);
   const [query, setQuery] = useState("");
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [summaryEditorId, setSummaryEditorId] = useState<string | null>(null);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [summaryStatus, setSummaryStatus] = useState("");
+  const [summaryOpenIds, setSummaryOpenIds] = useState<Set<string>>(new Set());
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const repairGateRef = useRef<Promise<void> | null>(null);
+  const clipsRef = useRef<NewsClip[]>([]);
+  const summaryTimerRef = useRef<number | null>(null);
+  const summaryEditorIdRef = useRef<string | null>(null);
+  const summarySaveRef = useRef<Promise<void>>(Promise.resolve());
+  const summaryInputRef = useRef<HTMLTextAreaElement>(null);
+  const copiedTimerRef = useRef<number | null>(null);
 
   const visibleClips = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -76,9 +140,53 @@ export default function NewsClipBoard({
     });
   }, [clips, query, starOnly]);
 
+  function ensureLegacyTitleRepair(): Promise<void> {
+    if (!repairGateRef.current) {
+      repairGateRef.current = (async () => {
+        const result = await loadNewsClips();
+        const repaired: NewsClip[] = [];
+        for (const clip of result.clips) {
+          if (!clip.url) continue;
+          if (clip.title !== legacyAutoTitle(clipPlainText(clip.html))) continue;
+          const headline = await lookupArticleTitle(clip.url);
+          if (!headline || headline === clip.title) continue;
+          const updated = { ...clip, title: headline };
+          await saveNewsClip(updated);
+          repaired.push(updated);
+        }
+        if (repaired.length > 0) {
+          await publishNewsClipIndex(
+            repaired.map((clip) => ({
+              id: clip.id,
+              title: clip.title,
+              createdAt: clip.createdAt,
+              deleted: false,
+            })),
+          );
+        }
+      })().catch(() => {
+        repairGateRef.current = null;
+      });
+    }
+    return repairGateRef.current;
+  }
+
   async function refresh(showExpiryNotice = false) {
+    await flushSummaryDraft();
+    await ensureLegacyTitleRepair();
     const result = await loadNewsClips();
-    setClips(result.clips);
+    const editingSummaryId = summaryEditorIdRef.current;
+    let nextClips = result.clips;
+    if (editingSummaryId) {
+      const draftClip = clipsRef.current.find((item) => item.id === editingSummaryId);
+      if (draftClip) {
+        nextClips = result.clips.map((item) =>
+          item.id === editingSummaryId ? { ...item, summary: draftClip.summary ?? "" } : item,
+        );
+      }
+    }
+    clipsRef.current = nextClips;
+    setClips(nextClips);
     setClipsReady(true);
     if (!indexSyncedRef.current) {
       indexSyncedRef.current = true;
@@ -94,14 +202,16 @@ export default function NewsClipBoard({
     if (showExpiryNotice && result.removedCount > 0) {
       setNotice(`30일이 지난 ${result.removedCount}건을 삭제했습니다.`);
     }
-    return result.clips;
+    return nextClips;
   }
 
   useEffect(() => {
     let cancelled = false;
-    loadNewsClips()
+    ensureLegacyTitleRepair()
+      .then(() => loadNewsClips())
       .then((result) => {
         if (cancelled) return;
+        clipsRef.current = result.clips;
         setClips(result.clips);
         setClipsReady(true);
         if (!indexSyncedRef.current) {
@@ -147,12 +257,7 @@ export default function NewsClipBoard({
     setMode("index");
     const found = clips.some((clip) => clip.id === focusClipId);
     if (found) {
-      window.setTimeout(() => {
-        document.getElementById(`news-clip-${focusClipId}`)?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      }, 50);
+      setViewingId(focusClipId);
       return;
     }
     let cancelled = false;
@@ -176,6 +281,45 @@ export default function NewsClipBoard({
   }, [clips, clipsReady, focusClipId]);
 
   useEffect(() => {
+    const normalized = normalizeClipUrl(url);
+    if (!normalized || title.trim()) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void lookupArticleTitle(normalized).then((headline) => {
+        if (cancelled || !headline) return;
+        setTitle((current) => current.trim() || headline);
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [title, url]);
+
+  useEffect(() => {
+    clipsRef.current = clips;
+  }, [clips]);
+
+  useEffect(() => {
+    summaryEditorIdRef.current = summaryEditorId;
+  }, [summaryEditorId]);
+
+  useEffect(() => {
+    if (!summaryEditorId) return;
+    summaryInputRef.current?.focus();
+  }, [summaryEditorId]);
+
+  useEffect(() => {
+    return () => {
+      if (summaryTimerRef.current) window.clearTimeout(summaryTimerRef.current);
+      if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+      const id = summaryEditorIdRef.current;
+      const clip = id ? clipsRef.current.find((item) => item.id === id) : null;
+      if (clip) void saveNewsClip(clip);
+    };
+  }, []);
+
+  useEffect(() => {
     if (mode !== "edit") return;
     const editor = editorRef.current;
     if (!editor) return;
@@ -183,6 +327,8 @@ export default function NewsClipBoard({
   }, [editKey, mode]);
 
   function beginEdit(clip?: NewsClip) {
+    void closeSummaryEditor();
+    setViewingId(null);
     setEditingId(clip?.id ?? null);
     setTitle(clip?.title && clip.title !== "제목 없음" ? clip.title : "");
     setUrl(clip?.url ?? "");
@@ -227,9 +373,16 @@ export default function NewsClipBoard({
         return;
       }
       insertClipHtml(editor, fragment, range);
-      if (!url.trim()) {
+      let nextUrl = url.trim();
+      if (!nextUrl) {
         const urls = extractUrls(html, text);
-        if (urls.length === 1) setUrl(urls[0]);
+        if (urls.length === 1) {
+          nextUrl = urls[0];
+          setUrl(nextUrl);
+        }
+      }
+      if (!editingId) {
+        await handleSave({ urlValue: nextUrl, titleValue: title });
       }
     } catch {
       setNotice("붙여 넣기에 실패했습니다. 글과 이미지를 다시 복사해 주세요.");
@@ -257,10 +410,11 @@ export default function NewsClipBoard({
     }
   }
 
-  async function handleSave() {
+  async function handleSave(overrides?: { urlValue?: string; titleValue?: string }) {
     const editor = editorRef.current;
     if (!editor) return;
-    const normalizedUrl = normalizeClipUrl(url);
+    const normalizedUrl = normalizeClipUrl(overrides?.urlValue ?? url);
+    const typedTitle = overrides?.titleValue ?? title;
     if (normalizedUrl === null) {
       setNotice("URL은 http 또는 https 주소로 입력해 주세요.");
       return;
@@ -275,16 +429,19 @@ export default function NewsClipBoard({
         return;
       }
 
-      const existing = clips.find((clip) => clip.id === editingId);
+      const existing =
+        clipsRef.current.find((clip) => clip.id === editingId) ??
+        clips.find((clip) => clip.id === editingId);
       const createdAt = existing?.createdAt ?? new Date().toISOString();
       const clip: NewsClip = {
         id: editingId ?? crypto.randomUUID(),
-        title: title.trim() || deriveClipTitle(plain),
+        title: await resolveClipTitle({ typed: typedTitle, url: normalizedUrl, html }),
         url: normalizedUrl,
         html,
         createdAt,
         expiresAt: existing?.expiresAt ?? createClipExpiry(createdAt),
         permanent,
+        summary: existing?.summary ?? "",
       };
       await saveNewsClip(clip);
       const sent = await publishNewsClipIndex([
@@ -318,12 +475,14 @@ export default function NewsClipBoard({
   }
 
   async function handleTogglePermanent(clip: NewsClip) {
-    const nextPermanent = !clip.permanent;
+    await flushSummaryDraft();
+    const latest = clipsRef.current.find((item) => item.id === clip.id) ?? clip;
+    const nextPermanent = !latest.permanent;
     const expiresAt =
-      !nextPermanent && new Date(clip.expiresAt).getTime() <= Date.now()
+      !nextPermanent && new Date(latest.expiresAt).getTime() <= Date.now()
         ? createClipExpiry(new Date().toISOString())
-        : clip.expiresAt;
-    await saveNewsClip({ ...clip, permanent: nextPermanent, expiresAt });
+        : latest.expiresAt;
+    await saveNewsClip({ ...latest, permanent: nextPermanent, expiresAt });
     await refresh(false);
     setNotice(
       nextPermanent
@@ -337,6 +496,7 @@ export default function NewsClipBoard({
     const confirmed = window.confirm("이 저장 글을 삭제할까요? 일기장에는 삭제됨으로 남습니다.");
     if (!confirmed) return;
     await deleteNewsClip(id);
+    if (viewingId === id) setViewingId(null);
     const sent = clip
       ? await publishNewsClipIndex([
           {
@@ -355,14 +515,107 @@ export default function NewsClipBoard({
     );
   }
 
+  async function writeClipNow(id: string) {
+    const clip = clipsRef.current.find((item) => item.id === id);
+    if (!clip) return;
+    try {
+      await saveNewsClip(clip);
+      if (summaryEditorIdRef.current === id) {
+        setSummaryStatus(clip.summary?.trim() ? "저장됨" : "");
+      }
+    } catch {
+      if (summaryEditorIdRef.current === id) setSummaryStatus("저장 실패");
+    }
+  }
+
+  async function flushSummaryDraft() {
+    if (summaryTimerRef.current) {
+      window.clearTimeout(summaryTimerRef.current);
+      summaryTimerRef.current = null;
+      const id = summaryEditorIdRef.current;
+      if (id) {
+        const pending = writeClipNow(id);
+        summarySaveRef.current = summarySaveRef.current.then(() => pending);
+      }
+    }
+    await summarySaveRef.current;
+  }
+
+  function onSummaryDraft(id: string, value: string) {
+    const summary = value.slice(0, MAX_SUMMARY_LENGTH);
+    setSummaryDraft(summary);
+    setClips((current) => {
+      const next = current.map((item) => (item.id === id ? { ...item, summary } : item));
+      clipsRef.current = next;
+      return next;
+    });
+    setSummaryStatus("저장 중");
+    if (summaryTimerRef.current) window.clearTimeout(summaryTimerRef.current);
+    summaryTimerRef.current = window.setTimeout(() => {
+      summaryTimerRef.current = null;
+      const pending = writeClipNow(id);
+      summarySaveRef.current = summarySaveRef.current.then(() => pending);
+    }, 500);
+  }
+
+  function openSummaryEditor(clip: NewsClip) {
+    summaryEditorIdRef.current = clip.id;
+    setSummaryEditorId(clip.id);
+    setSummaryDraft(clip.summary ?? "");
+    setSummaryStatus(clip.summary?.trim() ? "저장됨" : "");
+  }
+
+  async function closeSummaryEditor() {
+    await flushSummaryDraft();
+    summaryEditorIdRef.current = null;
+    setSummaryEditorId(null);
+    setSummaryStatus("");
+  }
+
+  function toggleSummaryOpen(id: string) {
+    setSummaryOpenIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function copyLabel(id: string) {
+    if (copiedId === id) return "복사함";
+    if (copiedId === `fail:${id}`) return "복사 실패";
+    return "전체 복사";
+  }
+
+  async function copyClip(clip: NewsClip) {
+    await flushSummaryDraft();
+    const latest = clipsRef.current.find((item) => item.id === clip.id) ?? clip;
+    const copied = await writeClipboard(clipShareText(latest));
+    if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+    setCopiedId(copied ? clip.id : `fail:${clip.id}`);
+    copiedTimerRef.current = window.setTimeout(() => {
+      setCopiedId((current) => (current === clip.id || current === `fail:${clip.id}` ? null : current));
+    }, 1600);
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   async function handleExport() {
     const latest = await refresh(false);
-    if (latest.length === 0) {
-      setNotice("내보낼 저장 글이 없습니다.");
+    const chosen = latest.filter((clip) => selectedIds.has(clip.id));
+    if (chosen.length === 0) {
+      setNotice("앱 파일로 저장할 뉴스를 체크해 주세요.");
       return;
     }
-    await saveNewsClipFile(latest);
-    setNotice("앱 파일로 저장했습니다. 같은 파일로 다시 불러올 수 있습니다.");
+    await saveNewsClipFile(chosen);
+    setNotice(`체크한 ${chosen.length}건을 앱 파일로 저장했습니다. 같은 파일로 다시 불러올 수 있습니다.`);
   }
 
   async function handleImport(file: File) {
@@ -392,7 +645,7 @@ export default function NewsClipBoard({
             <h2 className="text-3xl font-bold text-gray-800">뉴스 저장</h2>
           </div>
           <p className="mt-2 text-sm text-gray-500">
-            네이버 등에서 복사한 글과 이미지를 함께 붙여 넣습니다. 별표를 누르면 영구 보관되고, 그 외에는 30일 후 삭제됩니다.
+            글을 붙여 넣으면 이 기기에 저장되고 인덱스로 보내집니다. 일기장 정보 인덱스에는 일자, 제목, 발생처 NEWS만 전달되고, 수정과 본문 보기는 이 앱에서 합니다.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -455,7 +708,7 @@ export default function NewsClipBoard({
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="비워 두면 본문 앞부분을 제목으로 씁니다."
+              placeholder="비워 두면 기사 맨 위 제목을 사용합니다."
               className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-none focus:border-blue-400"
             />
           </label>
@@ -518,7 +771,7 @@ export default function NewsClipBoard({
           </div>
 
           <p className="text-xs text-gray-500">
-            읽기 모드에서 복사한 글과 이미지를 아래에 함께 붙여 넣으세요. 저장할 때는 노란 형광, 굵게, 빨간 글자만 남깁니다.
+            읽기 모드에서 복사한 글과 이미지를 아래에 붙여 넣으면 저장되고 인덱스로 이동합니다. 제목은 기사 주소의 맨 위 제목을 사용합니다.
           </p>
 
           <div
@@ -593,8 +846,8 @@ export default function NewsClipBoard({
             <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-gray-500">
               {starOnly
-                ? `별표한 영구 보관 ${visibleClips.length}건입니다. URL을 누르면 해당 기사로 이동합니다.`
-                : `저장한 내용 ${visibleClips.length}건입니다. URL을 누르면 해당 기사로 이동합니다. 별표한 글은 계속 보관되고, 나머지는 30일 후 삭제됩니다.`}
+                ? `별표한 영구 보관 ${visibleClips.length}건입니다. 항목을 누르면 전체 내용을 봅니다.`
+                : `저장한 내용 ${visibleClips.length}건입니다. 체크한 뉴스만 앱 파일로 저장되고, 항목을 누르면 전체 내용을 봅니다.`}
             </p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -602,7 +855,7 @@ export default function NewsClipBoard({
                 onClick={() => void handleExport()}
                 className="rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white"
               >
-                앱 파일로 저장
+                {selectedIds.size > 0 ? `앱 파일로 저장 (${selectedIds.size})` : "앱 파일로 저장"}
               </button>
               <button
                 type="button"
@@ -628,7 +881,7 @@ export default function NewsClipBoard({
 
           {clips.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">
-              아직 저장된 뉴스가 없습니다. 작성 화면에서 붙여 넣은 뒤 인덱스에 저장하세요.
+              아직 저장된 뉴스가 없습니다. 작성 화면에 붙여 넣으면 저장되고 인덱스로 이동합니다.
             </div>
           ) : visibleClips.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">
@@ -637,79 +890,216 @@ export default function NewsClipBoard({
                 : "찾는 제목이나 내용이 없습니다."}
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-2">
               {visibleClips.map((clip) => (
                 <article
                   key={clip.id}
                   id={`news-clip-${clip.id}`}
-                  className="rounded-2xl border border-gray-100 p-4 shadow-sm"
+                  className="rounded-2xl border border-gray-100 px-4 py-3 shadow-sm"
                 >
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(clip.id)}
+                      onChange={() => toggleSelected(clip.id)}
+                      aria-label={`${clip.title} 앱 파일로 선택`}
+                      className="mt-1 h-4 w-4 shrink-0 accent-blue-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleTogglePermanent(clip)}
+                      aria-pressed={Boolean(clip.permanent)}
+                      aria-label={clip.permanent ? "영구 보관 해제" : "영구 보관"}
+                      title={clip.permanent ? "영구 보관 중" : "별표를 누르면 영구 보관됩니다"}
+                      className={`mt-0.5 text-xl leading-none ${
+                        clip.permanent ? "text-amber-500" : "text-gray-300 hover:text-amber-400"
+                      }`}
+                    >
+                      {clip.permanent ? "★" : "☆"}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
                         <button
                           type="button"
-                          onClick={() => void handleTogglePermanent(clip)}
-                          aria-pressed={Boolean(clip.permanent)}
-                          aria-label={clip.permanent ? "영구 보관 해제" : "영구 보관"}
-                          title={clip.permanent ? "영구 보관 중" : "별표를 누르면 영구 보관됩니다"}
-                          className={`mt-0.5 text-2xl leading-none ${
-                            clip.permanent ? "text-amber-500" : "text-gray-300 hover:text-amber-400"
-                          }`}
+                          onClick={() => setViewingId(clip.id)}
+                          className="min-w-0 flex-1 text-left"
                         >
-                          {clip.permanent ? "★" : "☆"}
+                          <h3 className="text-base font-bold text-gray-900">{clip.title}</h3>
+                          <p className="mt-1 text-xs text-gray-500">
+                            {clipDateLabel(clip.createdAt)}
+                            {" · "}
+                            {clip.permanent ? (
+                              <span className="font-bold text-amber-600">영구 보관</span>
+                            ) : (
+                              <span>{remainingDays(clip.expiresAt)}일 후 삭제</span>
+                            )}
+                          </p>
                         </button>
-                        <h3 className="text-lg font-bold text-gray-900">{clip.title}</h3>
+                        <div className="flex shrink-0 items-center gap-3 pt-0.5">
+                          {clip.summary?.trim() ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleSummaryOpen(clip.id)}
+                              aria-expanded={summaryOpenIds.has(clip.id)}
+                              className="text-sm font-bold text-yellow-600"
+                            >
+                              요약
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => void copyClip(clip)}
+                            className="text-sm font-bold text-blue-600"
+                          >
+                            {copyLabel(clip.id)}
+                          </button>
+                        </div>
                       </div>
-                      <p className="mt-1 text-xs text-gray-500">
-                        {new Date(clip.createdAt).toLocaleString("ko-KR")}
-                        {" · "}
-                        {clip.permanent ? (
-                          <span className="font-bold text-amber-600">영구 보관</span>
-                        ) : (
-                          <span>{remainingDays(clip.expiresAt)}일 후 삭제</span>
-                        )}
-                      </p>
+                      {summaryOpenIds.has(clip.id) && clip.summary?.trim() ? (
+                        <div className="mt-2 rounded-xl border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap text-gray-800">
+                          {clip.summary.trim()}
+                        </div>
+                      ) : null}
                       {clip.url && (
                         <a
                           href={clip.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mt-2 inline-block max-w-full truncate text-sm font-semibold text-blue-600 hover:text-blue-800"
+                          className="mt-1 block max-w-full truncate text-sm font-semibold text-blue-600 hover:text-blue-800"
                         >
                           {clip.url}
                         </a>
                       )}
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => beginEdit(clip)}
-                        className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-bold text-gray-700"
-                      >
-                        수정
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete(clip.id)}
-                        className="rounded-full px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
-                      >
-                        삭제
-                      </button>
-                    </div>
                   </div>
-                  {clip.html && (
-                    <ClipHtml
-                      html={clip.html}
-                      className="mt-3 max-h-96 overflow-y-auto text-sm leading-relaxed text-gray-800"
-                    />
-                  )}
                 </article>
               ))}
             </div>
           )}
         </div>
       )}
+      {(() => {
+        const viewing = clips.find((clip) => clip.id === viewingId);
+        if (!viewing) return null;
+        return (
+          <div className="fixed inset-0 z-[80] flex flex-col bg-white">
+            <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+              <p className="text-sm font-bold text-gray-500">저장된 뉴스</p>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (summaryEditorId === viewing.id) void closeSummaryEditor();
+                    else openSummaryEditor(viewing);
+                  }}
+                  aria-expanded={summaryEditorId === viewing.id}
+                  className="px-2 py-2 text-sm font-bold text-yellow-600"
+                >
+                  요약
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void copyClip(viewing)}
+                  className="px-2 py-2 text-sm font-bold text-blue-600"
+                >
+                  {copyLabel(viewing.id)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void closeSummaryEditor();
+                    setViewingId(null);
+                  }}
+                  className="rounded-full bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700"
+                >
+                  닫기
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-5">
+              <div className="mx-auto max-w-3xl">
+                <div className="flex items-start gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleTogglePermanent(viewing)}
+                    aria-pressed={Boolean(viewing.permanent)}
+                    aria-label={viewing.permanent ? "영구 보관 해제" : "영구 보관"}
+                    className={`mt-1 text-2xl leading-none ${
+                      viewing.permanent ? "text-amber-500" : "text-gray-300"
+                    }`}
+                  >
+                    {viewing.permanent ? "★" : "☆"}
+                  </button>
+                  <h2 className="text-2xl font-bold text-gray-900">{viewing.title}</h2>
+                </div>
+                {summaryEditorId === viewing.id ? (
+                  <div className="mt-3 rounded-xl border border-yellow-300 bg-yellow-50 px-4 py-3">
+                    <textarea
+                      ref={summaryInputRef}
+                      value={summaryDraft}
+                      onChange={(event) => onSummaryDraft(viewing.id, event.target.value)}
+                      onBlur={() => {
+                        void flushSummaryDraft();
+                      }}
+                      rows={4}
+                      maxLength={MAX_SUMMARY_LENGTH}
+                      placeholder="요약을 입력하면 자동으로 저장됩니다."
+                      aria-label="뉴스 요약"
+                      className="w-full resize-y bg-transparent text-sm leading-relaxed text-gray-900 outline-none"
+                    />
+                    {summaryStatus ? (
+                      <p className="mt-2 text-xs font-semibold text-yellow-700">{summaryStatus}</p>
+                    ) : null}
+                  </div>
+                ) : viewing.summary?.trim() ? (
+                  <div className="mt-3 rounded-xl border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-gray-800">
+                    {viewing.summary.trim()}
+                  </div>
+                ) : null}
+                <p className="mt-2 text-sm text-gray-500">
+                  {clipDateLabel(viewing.createdAt)}
+                  {" · "}
+                  {viewing.permanent
+                    ? "영구 보관"
+                    : `${remainingDays(viewing.expiresAt)}일 후 삭제`}
+                </p>
+                {viewing.url && (
+                  <a
+                    href={viewing.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 block break-all text-sm font-semibold text-blue-600 hover:text-blue-800"
+                  >
+                    {viewing.url}
+                  </a>
+                )}
+                {viewing.html && (
+                  <ClipHtml
+                    html={viewing.html}
+                    className="mt-6 text-base leading-relaxed text-gray-800"
+                  />
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-200 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => beginEdit(viewing)}
+                className="rounded-full bg-gray-100 px-4 py-2 text-sm font-bold text-gray-700"
+              >
+                수정
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelete(viewing.id)}
+                className="rounded-full px-4 py-2 text-sm font-bold text-red-600 hover:bg-red-50"
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

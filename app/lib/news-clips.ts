@@ -18,6 +18,7 @@ export type NewsClip = {
   createdAt: string;
   expiresAt: string;
   permanent?: boolean;
+  summary?: string;
 };
 
 export type NewsClipFile = {
@@ -268,9 +269,62 @@ export function clipHasImage(html: string): boolean {
   return /<img\b/i.test(html);
 }
 
+const META_LINE =
+  /^(등록|수정|입력)\s*\d{4}|구글에서 선호하는 매체|저작권|무단전재|ⓒ/;
+
+export function clipTextLines(html: string): string[] {
+  if (!html.trim() || typeof DOMParser === "undefined") return [];
+  const withBreaks = html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article)>/gi, "\n");
+  const doc = new DOMParser().parseFromString(withBreaks, "text/html");
+  return (doc.body.textContent ?? "")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+export function deriveClipTitleFromHtml(html: string): string {
+  const lines = clipTextLines(html);
+  const line =
+    lines.find((item) => item.length >= 8 && !META_LINE.test(item)) || lines[0] || "";
+  const title = line.replace(/^["“'‘]+|["”'’]+$/g, "").trim().slice(0, 80);
+  return title || "제목 없음";
+}
+
 export function deriveClipTitle(plain: string): string {
+  return deriveClipTitleFromHtml(plain);
+}
+
+export function legacyAutoTitle(plain: string): string {
   const title = plain.replace(/\s+/g, " ").trim().slice(0, 40);
   return title || "제목 없음";
+}
+
+export async function lookupArticleTitle(url: string): Promise<string> {
+  if (!url) return "";
+  try {
+    const response = await fetch(`/api/article-title?url=${encodeURIComponent(url)}`);
+    if (!response.ok) return "";
+    const data = (await response.json()) as { title?: string };
+    return String(data.title || "").trim().slice(0, 80);
+  } catch {
+    return "";
+  }
+}
+
+export async function resolveClipTitle(input: {
+  typed: string;
+  url: string;
+  html: string;
+}): Promise<string> {
+  const typed = input.typed.trim().slice(0, 80);
+  if (typed) return typed;
+  if (input.url) {
+    const remote = await lookupArticleTitle(input.url);
+    if (remote) return remote;
+  }
+  return deriveClipTitleFromHtml(input.html);
 }
 
 export function normalizeClipUrl(raw: string): string | null {
@@ -505,17 +559,19 @@ export async function importNewsClipFile(
         skipped += 1;
         continue;
       }
+      const summary = typeof item.summary === "string" ? item.summary.slice(0, 4000) : "";
       const clip: NewsClip = {
         id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(),
         title:
           typeof item.title === "string" && item.title.trim()
             ? item.title.trim().slice(0, 80)
-            : deriveClipTitle(clipPlainText(html)),
+            : deriveClipTitleFromHtml(html),
         url: normalizeClipUrl(rawUrl) ?? "",
         html,
         createdAt,
         expiresAt,
         permanent,
+        ...(summary.trim() ? { summary } : {}),
       };
       store.put(clip);
       imported += 1;
