@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import MiniTrend from "./components/MiniTrend";
 import IosInstallBanner from "./components/IosInstallBanner";
+import NewsClipBoard from "./components/NewsClipBoard";
 import {
   BREAKING_REFRESH_MS,
   COMMUNITY_REFRESH_MS,
@@ -75,6 +76,8 @@ export default function Home() {
   >(null);
   const [selectedDetailView, setSelectedDetailView] =
     useState<DetailView | null>(null);
+  const [newsClipOpen, setNewsClipOpen] = useState(false);
+  const [newsClipSession, setNewsClipSession] = useState(0);
   const [savedArticles, setSavedArticles] = useState<SavedArticle[]>(() => {
     if (typeof window === "undefined") {
       return [];
@@ -114,6 +117,7 @@ export default function Home() {
 
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const [serverSubscriptionCount, setServerSubscriptionCount] = useState<number | null>(null);
+  const [serverNewsHours, setServerNewsHours] = useState<string[] | null>(null);
   const [cronSecretConfigured, setCronSecretConfigured] = useState<boolean | null>(null);
   const [pushReady, setPushReady] = useState<boolean | null>(null);
   const [pushConnectionMessage, setPushConnectionMessage] = useState<string>("");
@@ -346,10 +350,24 @@ export default function Home() {
       setServerSubscriptionCount(count);
       setCronSecretConfigured(Boolean(data.cronSecretConfigured));
       setPushReady(Boolean(data.pushReady));
+      const settings = Array.isArray(data.subscriberSettings)
+        ? data.subscriberSettings
+        : [];
+      const localHoursLabel = formatNewsHoursLabel(scheduledNewsHours);
+      const matched = settings.find(
+        (item: { scheduledNewsHours?: string[] }) =>
+          formatNewsHoursLabel(item.scheduledNewsHours || []) ===
+          localHoursLabel,
+      );
+      const hoursFromServer = normalizeScheduledNewsHours(
+        matched?.scheduledNewsHours ?? settings[0]?.scheduledNewsHours ?? null,
+      );
+      setServerNewsHours(settings.length > 0 ? hoursFromServer : null);
       return count;
     } catch (error) {
       console.error("구독 상태 조회 에러:", error);
       setServerSubscriptionCount(null);
+      setServerNewsHours(null);
       return null;
     }
   };
@@ -634,6 +652,13 @@ export default function Home() {
         if (savedScheduled !== null) {
           setScheduledAlertEnabled(JSON.parse(savedScheduled));
         }
+
+        const savedHours = window.localStorage.getItem(SCHEDULED_NEWS_HOURS_STORAGE_KEY);
+        if (savedHours) {
+          setScheduledNewsHours(
+            normalizeScheduledNewsHours(JSON.parse(savedHours)),
+          );
+        }
       } catch (e) {
         console.error("알림 설정 복원 에러:", e);
       }
@@ -667,6 +692,12 @@ export default function Home() {
   useEffect(() => {
     if (selectedDetailView !== "알림 안내판") return;
     refreshPushSubscriptionStatus().catch(console.error);
+    syncPushPreferences(undefined, {
+      alertEnabled,
+      scheduledAlertEnabled,
+      scheduledNewsHours,
+      alertKeywords,
+    }).catch(console.error);
   }, [selectedDetailView]);
 
   useEffect(() => {
@@ -884,6 +915,7 @@ export default function Home() {
         } else {
           alert("알림 설정은 저장되었으나 푸시 연결에 실패했습니다. 홈 화면 앱에서 '푸시 연결하기'를 다시 눌러 주세요.");
         }
+        await refreshPushSubscriptionStatus();
         return;
       }
 
@@ -2179,30 +2211,56 @@ export default function Home() {
 
         <section className="mb-8">
           <div className="bg-white rounded-2xl shadow-md p-4">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
               {[
-                { label: "경제 현황판", targetId: "economy-dashboard" },
-                { label: "TOP 3", targetId: "top-issues" },
-                { label: "주요 속보", targetId: "breaking-news" },
-                { label: "경제 뉴스", targetId: "economy-news" },
-                { label: "커뮤니티 반응", targetId: "community-reactions" },
-                { label: "시사만평", targetId: "cartoon-section" },
+                { label: "경제 현황판", targetId: "economy-dashboard", action: "scroll" },
+                { label: "뉴스 저장", targetId: "news-clip-board", action: "clip" },
+                { label: "TOP 3", targetId: "top-issues", action: "scroll" },
+                { label: "주요 속보", targetId: "breaking-news", action: "scroll" },
+                { label: "경제 뉴스", targetId: "economy-news", action: "scroll" },
+                { label: "커뮤니티 반응", targetId: "community-reactions", action: "scroll" },
+                { label: "시사만평", targetId: "cartoon-section", action: "scroll" },
               ].map((item) => (
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    if (item.action === "clip") {
+                      setNewsClipOpen(true);
+                      setNewsClipSession((current) => current + 1);
+                      window.setTimeout(() => {
+                        document
+                          .getElementById(item.targetId)
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 50);
+                      return;
+                    }
                     document
                       .getElementById(item.targetId)
-                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                  }
-                  className="flex items-center justify-center rounded-xl bg-gray-50 px-3 py-3 text-center text-sm font-bold text-gray-800 transition hover:bg-blue-50 hover:text-blue-700"
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  className={`flex min-w-0 items-center justify-center rounded-xl px-3 py-3 text-center text-sm font-bold leading-tight transition ${
+                    item.action === "clip" && newsClipOpen
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "bg-gray-50 text-gray-800 hover:bg-blue-50 hover:text-blue-700"
+                  }`}
                 >
                   {item.label}
                 </button>
               ))}
             </div>
           </div>
+        </section>
+
+        <section
+          id="news-clip-board"
+          className={`mb-8 scroll-mt-32 ${newsClipOpen ? "" : "hidden"}`}
+        >
+          <NewsClipBoard
+            active={newsClipOpen}
+            openSession={newsClipSession}
+            onClose={() => setNewsClipOpen(false)}
+          />
         </section>
 
         <section className="mb-8">
@@ -2679,6 +2737,12 @@ export default function Home() {
                       <p>· 알림 권한: {notificationPermission}</p>
                       <p>· 서버 구독: {serverSubscriptionCount ?? "확인 중"}</p>
                       <p>
+                        · 서버 뉴스 시간:{" "}
+                        {serverNewsHours
+                          ? `${formatNewsHoursLabel(serverNewsHours)}시`
+                          : "확인 중"}
+                      </p>
+                      <p>
                         · 백그라운드 cron:{" "}
                         {cronSecretConfigured === null
                           ? "확인 중"
@@ -2794,6 +2858,22 @@ export default function Home() {
                           );
                         })}
                       </div>
+                      {serverNewsHours ? (
+                        <p
+                          className={`mt-3 text-xs leading-relaxed ${
+                            formatNewsHoursLabel(serverNewsHours) ===
+                            formatNewsHoursLabel(scheduledNewsHours)
+                              ? "text-gray-500"
+                              : "rounded-xl bg-amber-50 px-3 py-2 font-semibold text-amber-800"
+                          }`}
+                        >
+                          서버 발송 시간: {formatNewsHoursLabel(serverNewsHours)}시
+                          {formatNewsHoursLabel(serverNewsHours) !==
+                          formatNewsHoursLabel(scheduledNewsHours)
+                            ? " — 화면과 다릅니다. 홈 화면 앱에서 아래 ‘설정 저장’을 눌러야 09·11·14시 등도 발송됩니다."
+                            : " (cron이 이 시간에만 보냅니다)"}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
 
