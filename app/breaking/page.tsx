@@ -512,7 +512,12 @@ export default function BreakingPage() {
       case '매일경제':
         return 'text-gray-700';
       case '경향신문':
+      case '조선일보':
         return 'text-purple-600';
+      case '아시아경제':
+        return 'text-teal-700';
+      case '구글 뉴스':
+        return 'text-blue-700';
       case '뉴스':
         return 'text-gray-700';
       case 'BBC News':
@@ -542,8 +547,12 @@ export default function BreakingPage() {
         return '📡';
       case '매일경제':
       case '경향신문':
+      case '조선일보':
+      case '아시아경제':
       case '뉴스':
         return '📄';
+      case '구글 뉴스':
+        return '🔎';
       case 'BBC News':
       case 'New York Times':
       case 'Al Jazeera':

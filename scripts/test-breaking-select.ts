@@ -7,6 +7,7 @@ import {
   isNearDuplicateTitle,
   rememberSeenArticle,
   resolveClockTimePubDate,
+  isObituaryTitle,
   selectBreakingLists,
   koreanWallTimeToIso,
 } from "../lib/breaking-select.ts";
@@ -123,5 +124,38 @@ const diverse = selectBreakingLists(
 assert.equal(diverse.featured.length, 3);
 assert.ok(diverse.featured.filter((article) => article.source === "SBS").length <= 2);
 assert.equal(diverse.featured.some((article) => article.source === "JTBC"), true);
+
+assert.equal(isObituaryTitle("[부고] 홍길동 씨"), true);
+assert.equal(isObituaryTitle("전 장관 별세"), true);
+assert.equal(isObituaryTitle("코스피가 장중에 소폭으로 상승 마감"), false);
+
+const withoutObituaries = selectBreakingLists(
+  [
+    {
+      title: "[부고] 홍길동 씨 별세",
+      link: "https://obit.example/1",
+      pubDate: "2026-10-09T23:59:00.000Z",
+      description: "빈소 안내입니다. 충분히 긴 설명입니다.",
+      source: "연합뉴스",
+      feedPriority: "breaking" as const,
+    },
+    {
+      title: "코스피가 장중에 소폭으로 상승 마감",
+      link: "https://market.example/1",
+      pubDate: "2026-10-09T23:30:00.000Z",
+      description: "증시 설명입니다. 충분히 긴 설명입니다.",
+      source: "SBS",
+      feedPriority: "general" as const,
+    },
+  ],
+  { now: now.getTime(), featuredLimit: 5, perSource: 2 },
+);
+
+assert.equal(withoutObituaries.articles.length, 1);
+assert.equal(withoutObituaries.articles[0].link, "https://market.example/1");
+assert.equal(
+  withoutObituaries.featured.some((article) => isObituaryTitle(article.title)),
+  false,
+);
 
 console.log("breaking-select tests passed");

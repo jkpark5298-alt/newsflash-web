@@ -35,6 +35,7 @@ interface RSSFeedConfig {
   category: NewsCategory;
   limit: number;
   feedPriority: FeedPriority;
+  skipLinkIncludes?: string[];
 }
 
 const BREAKING_MAX_AGE_HOURS = 12;
@@ -107,6 +108,28 @@ const RSS_FEEDS: RSSFeedConfig[] = [
     source: '경향신문',
     category: '국내',
     limit: 8,
+    feedPriority: 'general'
+  },
+  {
+    url: 'https://www.chosun.com/arc/outboundfeeds/rss/?outputType=xml',
+    source: '조선일보',
+    category: '국내',
+    limit: 12,
+    feedPriority: 'headline',
+    skipLinkIncludes: ['/jp/', '/sports/', '/entertainments/', '/culture-life/', '/opinion/']
+  },
+  {
+    url: 'https://view.asiae.co.kr/rss/all.htm',
+    source: '아시아경제',
+    category: '국내',
+    limit: 8,
+    feedPriority: 'general'
+  },
+  {
+    url: 'https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko',
+    source: '구글 뉴스',
+    category: '국내',
+    limit: 12,
     feedPriority: 'general'
   }
 ];
@@ -201,19 +224,28 @@ function hasArticleLink(link: string | undefined): link is string {
   return Boolean(link && link !== '#' && /^https?:\/\//i.test(link));
 }
 
+function isSkippedLink(link: string, patterns: string[] | undefined): boolean {
+  if (!patterns?.length) {
+    return false;
+  }
+
+  return patterns.some((pattern) => link.includes(pattern));
+}
+
 async function fetchRSSFeed({
   url,
   source,
   category,
   limit,
-  feedPriority
+  feedPriority,
+  skipLinkIncludes
 }: RSSFeedConfig): Promise<Article[]> {
   try {
     const feed = await parser.parseURL(url);
     const articles: Article[] = [];
 
-    for (const item of feed.items.slice(0, limit)) {
-      if (!hasArticleLink(item.link)) {
+    for (const item of feed.items) {
+      if (!hasArticleLink(item.link) || isSkippedLink(item.link, skipLinkIncludes)) {
         continue;
       }
 
@@ -241,7 +273,11 @@ async function fetchRSSFeed({
       articles.push(article);
     }
 
-    return articles;
+    articles.sort(
+      (left, right) => new Date(right.pubDate).getTime() - new Date(left.pubDate).getTime(),
+    );
+
+    return articles.slice(0, limit);
   } catch (error) {
     console.error(`RSS 피드 가져오기 실패 (${source}):`, error);
     return [];
@@ -491,6 +527,10 @@ async function aggregateBreakingNews() {
   }
 
   const selected = selectBreakingLists(allArticles);
+
+  if (selected.articles.length === 0) {
+    throw new Error('속보 수집 결과가 비어 있습니다.');
+  }
   const articles = selected.articles.map(toPublicArticle);
   const featured = selected.featured.map(toPublicArticle);
   const sourceStats = createSourceStats(articles);

@@ -291,12 +291,8 @@ function hasBreakingMark(title: string): boolean {
   return /속보|긴급/.test(title);
 }
 
-function routinePenalty(title: string): number {
-  if (/부고|부음|별세/.test(title)) {
-    return 20;
-  }
-
-  return 0;
+export function isObituaryTitle(title: string): boolean {
+  return /부고|부음|별세/.test(title);
 }
 
 function descriptionQuality(description: string): number {
@@ -350,7 +346,9 @@ export function selectBreakingLists<T extends RankableArticle>(
   const now = options?.now ?? Date.now();
   const featuredLimit = options?.featuredLimit ?? 12;
   const perSource = options?.perSource ?? 2;
-  const groups = groupArticles(articles);
+  const groups = groupArticles(
+    articles.filter((article) => !isObituaryTitle(article.title)),
+  );
 
   const rankedGroups = groups
     .map((group) => {
@@ -367,8 +365,7 @@ export function selectBreakingLists<T extends RankableArticle>(
         group.some((item) => hasBreakingMark(item.title))
           ? 10
           : 0) +
-        priority -
-        routinePenalty(representative.title);
+        priority;
 
       return { representative, score };
     })

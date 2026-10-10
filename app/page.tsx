@@ -1768,7 +1768,11 @@ export default function Home() {
       case "JTBC":
         return "📡";
       case "경향신문":
+      case "조선일보":
+      case "아시아경제":
         return "📰";
+      case "구글 뉴스":
+        return "🔎";
       case "한겨레":
         return "📰";
       case "BBC News":
@@ -1803,7 +1807,12 @@ export default function Home() {
       case "JTBC":
         return "text-red-600";
       case "경향신문":
+      case "조선일보":
         return "text-purple-600";
+      case "아시아경제":
+        return "text-teal-700";
+      case "구글 뉴스":
+        return "text-blue-700";
       case "한겨레":
         return "text-indigo-600";
       case "BBC News":
