@@ -57,6 +57,7 @@ export interface Article {
   source: string;
   imageUrl?: string;
   category?: "국내" | "국제";
+  topic?: "증권" | "부동산" | "수출" | "화장품" | "경제지표" | "경제통계";
 }
 
 export interface Cartoon {

@@ -25,6 +25,7 @@ import {
   REGION_KEYWORDS,
   DETAIL_VIEW_OPTIONS,
 } from "./lib/home-constants";
+import { previewEconomyNews, selectEconomyNews, ECONOMY_TOPICS } from "@/lib/economy-select";
 import {
   DEFAULT_NEWS_HOURS,
   SELECTABLE_NEWS_HOURS,
@@ -105,6 +106,7 @@ export default function Home() {
   const [breakingError, setBreakingError] = useState<string | null>(null);
   const [breakingReady, setBreakingReady] = useState(false);
   const [internationalNews, setInternationalNews] = useState<Article[]>([]);
+  const [economyFeed, setEconomyFeed] = useState<Article[]>([]);
   const [cartoons, setCartoons] = useState<Cartoon[]>([]);
   const [communityIssues, setCommunityIssues] = useState<CommunityIssue[]>([]);
   const [selectedRegion, setSelectedRegion] = useState<RegionFilter>("전체");
@@ -1066,6 +1068,23 @@ export default function Home() {
     }
   }
 
+  async function fetchEconomyNews() {
+    try {
+      const economyResponse = await fetch("/api/economy", {
+        cache: "no-store",
+      });
+
+      if (!economyResponse.ok) {
+        return;
+      }
+
+      const economyData = await economyResponse.json();
+      setEconomyFeed(Array.isArray(economyData.articles) ? economyData.articles : []);
+    } catch (err) {
+      console.error("경제 뉴스 로딩 에러:", err);
+    }
+  }
+
   async function fetchInternationalNews() {
     try {
       setInternationalLoading(true);
@@ -1133,12 +1152,17 @@ export default function Home() {
 
     void fetchMarketData();
     void fetchBreakingNews();
+    void fetchEconomyNews();
     void fetchCartoons();
     void fetchInternationalNews();
     void fetchCommunityIssues();
 
     const breakingInterval = setInterval(
       () => void fetchBreakingNews(),
+      BREAKING_REFRESH_MS,
+    );
+    const economyInterval = setInterval(
+      () => void fetchEconomyNews(),
       BREAKING_REFRESH_MS,
     );
     const cartoonInterval = setInterval(
@@ -1160,6 +1184,7 @@ export default function Home() {
 
     return () => {
       clearInterval(breakingInterval);
+      clearInterval(economyInterval);
       clearInterval(cartoonInterval);
       clearInterval(communityInterval);
       clearInterval(internationalInterval);
@@ -1652,25 +1677,8 @@ export default function Home() {
   }, [breakingNews, internationalNews]);
 
   const economicNews = useMemo(() => {
-    const economyKeywords = [
-      "경제",
-      "금리",
-      "환율",
-      "증시",
-      "주가",
-      "코스피",
-      "코스닥",
-      "물가",
-      "부동산",
-    ];
-
-    return [...breakingNews, ...internationalNews]
-      .filter((article) => {
-        const text = `${article.title} ${article.description}`;
-        return economyKeywords.some((keyword) => text.includes(keyword));
-      })
-      .slice(0, 20);
-  }, [breakingNews, internationalNews]);
+    return selectEconomyNews([...economyFeed, ...breakingNews]);
+  }, [economyFeed, breakingNews]);
 
   const regionArticles = useMemo(() => {
     const matchesKeyword = (article: Article, keyword: string) => {
@@ -1912,11 +1920,29 @@ export default function Home() {
         <span className="text-gray-400 text-sm">
           {getRelativeTime(article.pubDate)}
         </span>
-        {article.category && (
+        {article.topic ? (
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+              article.topic === "증권"
+                ? "bg-blue-50 text-blue-700"
+                : article.topic === "부동산"
+                  ? "bg-amber-50 text-amber-800"
+                  : article.topic === "수출"
+                    ? "bg-teal-50 text-teal-800"
+                    : article.topic === "화장품"
+                      ? "bg-pink-50 text-pink-700"
+                      : article.topic === "경제통계"
+                        ? "bg-slate-100 text-slate-700"
+                        : "bg-indigo-50 text-indigo-700"
+            }`}
+          >
+            {article.topic}
+          </span>
+        ) : article.category ? (
           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
             {article.category}
           </span>
-        )}
+        ) : null}
       </div>
     );
   };
@@ -2534,18 +2560,18 @@ export default function Home() {
                     <span className="text-3xl">💰</span>
                     <div>
                       <h2 className="text-3xl font-bold text-gray-800">
-                        경제 뉴스 전체보기
+                        경제 뉴스
                       </h2>
                       <p className="text-sm text-gray-500 mt-1">
-                        국내 경제·미국 증시·금리 관련 뉴스를 모아 확인합니다.
+                        증권, 부동산, 수출, 화장품, 경제지표, 경제통계. 최근 36시간.
                       </p>
                     </div>
                   </div>
                 </div>
                 {renderNewsList(
                   economicNews,
-                  "경제 뉴스를 불러오는 중입니다.",
-                  20,
+                  "최근 36시간 안에 해당 경제 기사가 없습니다.",
+                  36,
                 )}
               </div>
             )}
@@ -3462,7 +3488,10 @@ export default function Home() {
               <div>
                 <h2 className="text-3xl font-bold text-gray-800">경제 뉴스</h2>
                 <p className="text-sm text-gray-500 mt-1">
-                  국내 경제·미국 증시·금리 관련 뉴스를 우선 표시합니다.
+                  {ECONOMY_TOPICS.map(
+                    (topic) =>
+                      `${topic} ${economicNews.filter((article) => article.topic === topic).length}건`,
+                  ).join(" · ")}
                 </p>
               </div>
             </div>
@@ -3476,9 +3505,9 @@ export default function Home() {
           </div>
 
           {renderNewsList(
-            economicNews,
-            "경제 뉴스는 다음 단계에서 전용 API와 함께 보강 예정입니다.",
-            isEconomyNewsExpanded ? 20 : 6,
+            isEconomyNewsExpanded ? economicNews : previewEconomyNews(economicNews, 6),
+            "최근 36시간 안에 해당 경제 기사가 없습니다.",
+            isEconomyNewsExpanded ? 36 : 6,
           )}
         </section>
 
