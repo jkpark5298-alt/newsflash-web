@@ -8,6 +8,85 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+const RECEIVED_ALERTS_DB = "newsflash-alerts";
+const RECEIVED_ALERTS_STORE = "received";
+const RECEIVED_ALERTS_LIMIT = 30;
+
+function openReceivedAlertsDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(RECEIVED_ALERTS_DB, 1);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+
+      if (!db.objectStoreNames.contains(RECEIVED_ALERTS_STORE)) {
+        db.createObjectStore(RECEIVED_ALERTS_STORE, { keyPath: "id" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function rememberPushAlert(data) {
+  const receivedAt = new Date().toISOString();
+  const title = data.title || "알림";
+  const kind =
+    data.focus === "keyword" || data.focus === "news" || data.focus === "stock"
+      ? data.focus
+      : title.includes("속보 알림")
+        ? "keyword"
+        : title.includes("정기 뉴스")
+          ? "news"
+          : title.includes("증시")
+            ? "stock"
+            : "other";
+  const alert = {
+    id: data.recordId || `${kind}:${title}:${receivedAt.slice(0, 16)}`,
+    kind,
+    title,
+    body: data.body || "",
+    url: data.url,
+    receivedAt,
+    articles: Array.isArray(data.articles)
+      ? data.articles.slice(0, 5).map((article) => ({
+          title: article.title || "제목 없음",
+          link: article.link || "",
+        }))
+      : undefined,
+  };
+
+  return openReceivedAlertsDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(RECEIVED_ALERTS_STORE, "readwrite");
+        const store = tx.objectStore(RECEIVED_ALERTS_STORE);
+        store.put(alert);
+
+        const existing = store.getAll();
+        existing.onsuccess = () => {
+          const items = (existing.result || []).sort((left, right) =>
+            right.receivedAt.localeCompare(left.receivedAt),
+          );
+
+          for (const item of items.slice(RECEIVED_ALERTS_LIMIT)) {
+            store.delete(item.id);
+          }
+        };
+
+        tx.oncomplete = () => {
+          db.close();
+          resolve(alert);
+        };
+        tx.onerror = () => {
+          db.close();
+          reject(tx.error);
+        };
+      }),
+  );
+}
+
 self.addEventListener("push", (event) => {
   let data = {
     title: "알림 타이틀",
@@ -16,6 +95,7 @@ self.addEventListener("push", (event) => {
     view: "alerts",
     focus: undefined,
     articles: undefined,
+    recordId: undefined,
   };
 
   if (event.data) {
@@ -35,19 +115,33 @@ self.addEventListener("push", (event) => {
         : "/?view=alerts#recent-scheduled-alerts");
 
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-192.png",
-      data: {
-        url: targetUrl,
-        view: data.view || "alerts",
-        focus: data.focus,
-        title: data.title,
-        body: data.body,
-        articles: data.articles,
-      },
-    }),
+    rememberPushAlert(data)
+      .catch((error) => {
+        console.error("받은 알림 저장 실패:", error);
+      })
+      .then(() =>
+        self.clients.matchAll({ type: "window", includeUncontrolled: true }),
+      )
+      .then((clientList) => {
+        for (const client of clientList) {
+          client.postMessage({ type: "ALERT_RECEIVED" });
+        }
+
+        return self.registration.showNotification(data.title, {
+          body: data.body,
+          icon: "/icons/icon-192.png",
+          badge: "/icons/icon-192.png",
+          data: {
+            url: targetUrl,
+            view: data.view || "alerts",
+            focus: data.focus,
+            title: data.title,
+            body: data.body,
+            articles: data.articles,
+            recordId: data.recordId,
+          },
+        });
+      }),
   );
 });
 

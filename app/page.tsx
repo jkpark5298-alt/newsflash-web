@@ -27,6 +27,12 @@ import {
 } from "./lib/home-constants";
 import { previewEconomyNews, selectEconomyNews, ECONOMY_TOPICS } from "@/lib/economy-select";
 import {
+  deleteReceivedAlert,
+  loadReceivedAlerts,
+  saveReceivedAlert,
+  type ReceivedAlert,
+} from "./lib/received-alerts";
+import {
   DEFAULT_NEWS_HOURS,
   SELECTABLE_NEWS_HOURS,
   STOCK_HOURS,
@@ -61,7 +67,7 @@ import {
   normalizeIssueText,
   isPoliticalCategory,
 } from "./lib/issue-clustering";
-import { serializePushSubscription } from "./lib/push-client";
+import { hasPushSubscription, serializePushSubscription } from "./lib/push-client";
 import {
   isAlertKeywordValid,
   isAlreadySeenArticle,
@@ -199,6 +205,13 @@ export default function Home() {
       return saved ? JSON.parse(saved) : [];
     } catch (e) { return []; }
   });
+  const [receivedAlerts, setReceivedAlerts] = useState<ReceivedAlert[]>([]);
+
+  const persistReceivedAlert = (alert: ReceivedAlert) => {
+    saveReceivedAlert(alert)
+      .then(setReceivedAlerts)
+      .catch((error) => console.error("받은 알림 저장 실패:", error));
+  };
 
   const triggerScheduledNewsRecord = (title: string, articlesList: Article[]) => {
     const item: ScheduledNewsAlertItem = {
@@ -758,10 +771,19 @@ export default function Home() {
   }, [loading]);
 
   useEffect(() => {
+    loadReceivedAlerts().then(setReceivedAlerts).catch(console.error);
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
 
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
+      if (data?.type === "ALERT_RECEIVED") {
+        loadReceivedAlerts().then(setReceivedAlerts).catch(console.error);
+        return;
+      }
+
       if (!data || data.type !== "OPEN_ALERT_BOARD") return;
       openAlertBoard({
         focus: data.focus || "news",
@@ -857,9 +879,13 @@ export default function Home() {
     }
   };
 
-  const checkNewArticlesForKeywords = (articles: Article[]) => {
+  const checkNewArticlesForKeywords = async (articles: Article[]) => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (!alertEnabled || alertKeywords.length === 0 || Notification.permission !== "granted") return;
+    if (await hasPushSubscription()) {
+      hasWebPushSubscriptionRef.current = true;
+      return;
+    }
 
     const newArticles = articles.filter(
       (art) => !isAlreadySeenArticle(seenArticlesRef.current, art.title, art.link),
@@ -890,6 +916,14 @@ export default function Home() {
             window.focus();
             window.open(article.link, "_blank");
           };
+          persistReceivedAlert({
+            id: `keyword:${article.link || article.title}`,
+            kind: "keyword",
+            title: displayTitle,
+            body: article.description || "자세한 내용은 클릭하여 확인하세요.",
+            url: article.link,
+            receivedAt: new Date().toISOString(),
+          });
         } catch (e) {
           console.error("자동 속보 알림 전송 실패:", e);
         }
@@ -1042,7 +1076,7 @@ export default function Home() {
           rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
         );
       } else {
-        checkNewArticlesForKeywords(articles);
+        await checkNewArticlesForKeywords(articles);
         articles.forEach((art: Article) =>
           rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
         );
@@ -1447,6 +1481,18 @@ export default function Home() {
                   articles: top5,
                 });
               };
+              persistReceivedAlert({
+                id: alertKey,
+                kind: "news",
+                title,
+                body,
+                url: "/?view=alerts&focus=news#recent-scheduled-alerts",
+                receivedAt: new Date().toISOString(),
+                articles: top5.map((art) => ({
+                  title: art.title,
+                  link: art.link,
+                })),
+              });
             } catch (e) {
               console.error("정기 뉴스 알림 발송 실패:", e);
             }
@@ -1508,6 +1554,14 @@ export default function Home() {
                   body,
                 });
               };
+              persistReceivedAlert({
+                id: alertKey,
+                kind: "stock",
+                title,
+                body,
+                url: "/?view=alerts&focus=stock#recent-scheduled-alerts",
+                receivedAt: new Date().toISOString(),
+              });
             } catch (e) {
               console.error("정기 증시 알림 발송 실패:", e);
             }
@@ -3086,6 +3140,73 @@ export default function Home() {
                     <p className="mt-2 text-right text-[11px] text-gray-400">
                       키워드·토글은 변경 시 자동 저장됩니다. 저장 버튼은 푸시 재연결이 필요할 때 사용하세요.
                     </p>
+
+                    <div id="received-alerts" className="mt-8 border-t border-gray-100 pt-6 scroll-mt-32">
+                      <div className="mb-4">
+                        <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
+                          <span>🔔</span>
+                          <span>받은 알림</span>
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          키워드 알림과 정기 알림이 도착하면 이 기기에 최근 30건을 남깁니다. 앱을 닫은 뒤 받은 푸시도 다시 열면 여기에 있습니다.
+                        </p>
+                      </div>
+                      {receivedAlerts.length > 0 ? (
+                        <div className="space-y-3 mb-6">
+                          {receivedAlerts.map((alert) => (
+                            <div key={alert.id} className="rounded-2xl border border-gray-200 bg-white p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                                      {alert.kind === "keyword"
+                                        ? "키워드"
+                                        : alert.kind === "news"
+                                          ? "정기 뉴스"
+                                          : alert.kind === "stock"
+                                            ? "정기 증시"
+                                            : "알림"}
+                                    </span>
+                                    <span className="text-[11px] text-gray-400">
+                                      {new Date(alert.receivedAt).toLocaleString("ko-KR")}
+                                    </span>
+                                  </div>
+                                  <h4 className="font-bold text-gray-800 text-sm">{alert.title}</h4>
+                                  <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-gray-600 leading-relaxed line-clamp-4">
+                                    {alert.body}
+                                  </pre>
+                                  {alert.url && /^https?:\/\//i.test(alert.url) ? (
+                                    <a
+                                      href={alert.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="mt-2 inline-block text-xs font-semibold text-blue-600 hover:underline"
+                                    >
+                                      기사 보기
+                                    </a>
+                                  ) : null}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    deleteReceivedAlert(alert.id)
+                                      .then(setReceivedAlerts)
+                                      .catch((error) => console.error("받은 알림 삭제 실패:", error));
+                                  }}
+                                  className="text-red-500 hover:text-red-700 font-bold text-xs whitespace-nowrap px-2 py-1 rounded hover:bg-red-50"
+                                >
+                                  삭제
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400 py-4 text-center mb-6">
+                          아직 저장된 받은 알림이 없습니다.
+                        </p>
+                      )}
+                    </div>
 
                     {/* 3. Recent Scheduled Alert Recording & Management (1 item per prev slot) */}
                     <div id="recent-scheduled-alerts" className="mt-8 border-t border-gray-100 pt-6 scroll-mt-32">

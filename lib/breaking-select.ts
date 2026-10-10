@@ -182,6 +182,30 @@ export function rememberSeenArticle(
   }
 }
 
+export type DeliveryAlert = {
+  focus?: string;
+  seenTitle?: string;
+  tag: string;
+  delivered: boolean;
+};
+
+export function seenLinksAfterDelivery(
+  existing: string[],
+  alerts: DeliveryAlert[],
+) {
+  const seen = new Set(existing);
+
+  for (const alert of alerts) {
+    if (!alert.delivered || alert.focus !== "keyword") {
+      continue;
+    }
+
+    rememberSeenArticle(seen, alert.seenTitle || "", alert.tag);
+  }
+
+  return Array.from(seen).slice(-200);
+}
+
 export function seoulParts(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Seoul",

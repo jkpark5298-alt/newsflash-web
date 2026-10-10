@@ -25,6 +25,21 @@ export function serializePushSubscription(subscription: PushSubscription) {
   };
 }
 
+export async function hasPushSubscription() {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+    return false;
+  }
+
+  const registration = await navigator.serviceWorker.getRegistration();
+
+  if (!registration) {
+    return false;
+  }
+
+  const subscription = await registration.pushManager.getSubscription();
+  return Boolean(subscription);
+}
+
 export async function syncExistingPushPreferences(settings: {
   alertEnabled?: boolean;
   alertKeywords?: string[];

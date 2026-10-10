@@ -6,8 +6,8 @@ on:
   schedule:
     # 매시 정각(UTC=KST 정각) — 정기 뉴스/증시
     - cron: "0 * * * *"
-    # 키워드 속보 검사용
-    - cron: "*/10 * * * *"
+    # 키워드 속보 검사용. 화면을 켜 둔 5분 확인과 간격을 맞춘다.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:

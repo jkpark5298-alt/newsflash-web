@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import {
   isAlreadySeenArticle,
   rememberSeenArticle,
+  seenLinksAfterDelivery,
+  type DeliveryAlert,
 } from "@/lib/breaking-select";
 import {
   getKstTimeParts,
@@ -28,6 +30,8 @@ type NotificationPayload = {
   slotKey?: string;
   view?: "alerts";
   focus?: "news" | "stock" | "keyword";
+  recordId?: string;
+  seenTitle?: string;
   articles?: Array<{ title?: string; link?: string; description?: string; source?: string }>;
 };
 
@@ -77,6 +81,7 @@ async function buildScheduledNotifications(
             source: art.source,
           })),
           slotKey,
+          recordId: slotKey,
         });
       }
     }
@@ -103,6 +108,7 @@ async function buildScheduledNotifications(
           view: "alerts",
           focus: "stock",
           slotKey,
+          recordId: slotKey,
         });
       } else {
         notifications.push({
@@ -116,6 +122,7 @@ async function buildScheduledNotifications(
           view: "alerts",
           focus: "stock",
           slotKey,
+          recordId: slotKey,
         });
       }
     }
@@ -131,12 +138,9 @@ function buildKeywordNotifications(
     description?: string;
     link?: string;
   }>,
-): { notifications: NotificationPayload[]; seenLinks: string[] } {
+): NotificationPayload[] {
   if (!subscription.alertEnabled || !subscription.alertKeywords?.length) {
-    return {
-      notifications: [],
-      seenLinks: subscription.seenArticleLinks || [],
-    };
+    return [];
   }
 
   const seenLinks = new Set(subscription.seenArticleLinks || []);
@@ -160,13 +164,13 @@ function buildKeywordNotifications(
       body: article.description || "자세한 내용은 클릭하여 확인하세요.",
       tag: link,
       url: article.link || ALERT_BOARD_URL,
+      focus: "keyword",
+      recordId: `keyword:${link || title}`,
+      seenTitle: title,
     });
   }
 
-  return {
-    notifications,
-    seenLinks: Array.from(seenLinks).slice(-200),
-  };
+  return notifications;
 }
 
 export async function GET(request: Request) {
@@ -186,11 +190,15 @@ export async function GET(request: Request) {
     const shouldSendScheduled = force || test || isNewsTime || isStockTime;
 
     const subscriptions = await getSubscriptions();
+    const subscriberNewsHours = subscriptions.map((sub) =>
+      normalizeScheduledNewsHours(sub.scheduledNewsHours),
+    );
     if (subscriptions.length === 0) {
       return NextResponse.json({
         message:
           "등록된 푸시 구독자가 없습니다. iPhone 홈 화면 PWA에서 알림을 다시 켜 주세요.",
         kstTime: timeStr,
+        hourSlot,
         storage: getPushStorageInfo(),
       });
     }
@@ -204,6 +212,7 @@ export async function GET(request: Request) {
         message: `스케줄 시간이 아니며 키워드 구독자도 없습니다. 현재 KST: ${timeStr}`,
         kstTime: timeStr,
         hourSlot,
+        subscriberNewsHours,
       });
     }
 
@@ -273,7 +282,6 @@ export async function GET(request: Request) {
     const perSubscriptionNotifications: Array<{
       sub: PushSubscriptionRecord;
       notifications: NotificationPayload[];
-      seenLinks?: string[];
     }> = [];
 
     for (const sub of subscriptions) {
@@ -292,14 +300,12 @@ export async function GET(request: Request) {
         }
       }
 
-      const keywordResult = buildKeywordNotifications(sub, breakingNews);
-      notifications.push(...keywordResult.notifications);
+      notifications.push(...buildKeywordNotifications(sub, breakingNews));
 
       if (notifications.length > 0) {
         perSubscriptionNotifications.push({
           sub,
           notifications,
-          seenLinks: keywordResult.seenLinks,
         });
       }
     }
@@ -310,6 +316,14 @@ export async function GET(request: Request) {
         kstTime: timeStr,
         hourSlot,
         breakingNewsCount: breakingNews.length,
+        subscriberNewsHours,
+        matchedNewsHourCount: subscriptions.filter(
+          (sub) =>
+            sub.scheduledAlertEnabled !== false &&
+            normalizeScheduledNewsHours(sub.scheduledNewsHours).includes(
+              hourSlot,
+            ),
+        ).length,
       });
     }
 
@@ -332,7 +346,11 @@ export async function GET(request: Request) {
     );
 
     for (const item of perSubscriptionNotifications) {
+      const delivery: DeliveryAlert[] = [];
+
       for (const alert of item.notifications) {
+        let delivered = false;
+
         try {
           await webpush.sendNotification(
             {
@@ -345,9 +363,11 @@ export async function GET(request: Request) {
               url: alert.url || ALERT_BOARD_URL,
               view: alert.view || "alerts",
               focus: alert.focus,
+              recordId: alert.recordId,
               articles: alert.articles,
             }),
           );
+          delivered = true;
           sentCount++;
           if (alert.slotKey) {
             sentSlotKeys.add(alert.slotKey);
@@ -364,18 +384,26 @@ export async function GET(request: Request) {
             failedEndpoints.push(item.sub.endpoint);
           }
         }
+
+        delivery.push({
+          focus: alert.focus,
+          seenTitle: alert.seenTitle,
+          tag: alert.tag,
+          delivered,
+        });
       }
 
-      if (item.seenLinks) {
-        const index = updatedSubscriptions.findIndex(
-          (sub) => sub.endpoint === item.sub.endpoint,
-        );
-        if (index > -1) {
-          updatedSubscriptions[index] = {
-            ...updatedSubscriptions[index],
-            seenArticleLinks: item.seenLinks,
-          };
-        }
+      const index = updatedSubscriptions.findIndex(
+        (sub) => sub.endpoint === item.sub.endpoint,
+      );
+      if (index > -1) {
+        updatedSubscriptions[index] = {
+          ...updatedSubscriptions[index],
+          seenArticleLinks: seenLinksAfterDelivery(
+            updatedSubscriptions[index].seenArticleLinks || [],
+            delivery,
+          ),
+        };
       }
     }
 
@@ -400,6 +428,8 @@ export async function GET(request: Request) {
       subscriberCount: subscriptions.length,
       kstTime: timeStr,
       hourSlot,
+      subscriberNewsHours,
+      breakingNewsCount: breakingNews.length,
       storage: getPushStorageInfo(),
       notificationsSent: [
         ...new Set(

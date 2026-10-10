@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState, useRef } from 'react';
 import Link from 'next/link';
-import { syncExistingPushPreferences } from '@/app/lib/push-client';
+import { hasPushSubscription, syncExistingPushPreferences } from '@/app/lib/push-client';
+import { saveReceivedAlert } from '@/app/lib/received-alerts';
 import {
   isAlertKeywordValid,
   isAlreadySeenArticle,
@@ -118,6 +119,31 @@ export default function BreakingPage() {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const seenArticlesRef = useRef<Set<string>>(new Set());
+  const skipAlertAutoSyncRef = useRef(true);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (skipAlertAutoSyncRef.current) {
+      skipAlertAutoSyncRef.current = false;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
+        window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(alertEnabled));
+      } catch (error) {
+        console.error(error);
+      }
+
+      syncExistingPushPreferences({
+        alertEnabled,
+        alertKeywords,
+      }).catch((error) => console.error('서버 푸시 설정 동기화 실패:', error));
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [alertKeywords, alertEnabled]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -184,9 +210,10 @@ export default function BreakingPage() {
     }
   };
 
-  const checkNewArticlesForKeywords = (newsArticles: Article[]) => {
+  const checkNewArticlesForKeywords = async (newsArticles: Article[]) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (!alertEnabled || alertKeywords.length === 0 || Notification.permission !== 'granted') return;
+    if (await hasPushSubscription()) return;
 
     const newArticles = newsArticles.filter(
       (art) => !isAlreadySeenArticle(seenArticlesRef.current, art.title, art.link),
@@ -217,6 +244,14 @@ export default function BreakingPage() {
             window.focus();
             window.open(article.link, '_blank');
           };
+          saveReceivedAlert({
+            id: `keyword:${article.link || article.title}`,
+            kind: 'keyword',
+            title: displayTitle,
+            body: article.description || '자세한 내용은 클릭하여 확인하세요.',
+            url: article.link,
+            receivedAt: new Date().toISOString(),
+          }).catch((error) => console.error('받은 알림 저장 실패:', error));
         } catch (e) {
           console.error('자동 속보 알림 전송 실패:', e);
         }
@@ -349,7 +384,7 @@ export default function BreakingPage() {
           rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
         );
       } else {
-        checkNewArticlesForKeywords(dataArticles);
+        await checkNewArticlesForKeywords(dataArticles);
         dataArticles.forEach((art: Article) =>
           rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
         );
