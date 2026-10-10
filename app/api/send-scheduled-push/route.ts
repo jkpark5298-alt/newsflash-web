@@ -12,12 +12,19 @@ import {
   getVapidKeys,
   hasSentSlot,
   isCronAuthorized,
+  markCronChecked,
   markSentSlot,
   matchesKeyword,
   saveSubscriptions,
   type PushSubscriptionRecord,
 } from "@/lib/push-storage";
-import { SELECTABLE_NEWS_HOURS, STOCK_HOURS, normalizeScheduledNewsHours } from "@/lib/alert-schedule";
+import {
+  SELECTABLE_NEWS_HOURS,
+  STOCK_HOURS,
+  normalizeScheduledNewsHours,
+  slotsForScheduledPush,
+  type ScheduledPushSlot,
+} from "@/lib/alert-schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,6 +35,7 @@ type NotificationPayload = {
   tag: string;
   url?: string;
   slotKey?: string;
+  hourSlot?: string;
   view?: "alerts";
   focus?: "news" | "stock" | "keyword";
   recordId?: string;
@@ -42,9 +50,7 @@ const ALERT_BOARD_URL = "/?view=alerts#recent-scheduled-alerts";
 async function buildScheduledNotifications(
   force: boolean,
   test: boolean,
-  hours: number,
-  minutes: number,
-  dateStr: string,
+  slot: ScheduledPushSlot,
   breakingNews: Array<{
     title?: string;
     link?: string;
@@ -54,7 +60,7 @@ async function buildScheduledNotifications(
   marketData: Array<{ key?: string; value?: string; change?: string }>,
 ): Promise<NotificationPayload[]> {
   const notifications: NotificationPayload[] = [];
-  const hourSlot = `${String(hours).padStart(2, "0")}:00`;
+  const { hours, hourSlot, dateStr } = slot;
   const isNewsTime = SELECTABLE_NEWS_HOURS.includes(hourSlot);
   const isStockTime = STOCK_HOURS.includes(hourSlot);
 
@@ -81,6 +87,7 @@ async function buildScheduledNotifications(
             source: art.source,
           })),
           slotKey,
+          hourSlot,
           recordId: slotKey,
         });
       }
@@ -108,6 +115,7 @@ async function buildScheduledNotifications(
           view: "alerts",
           focus: "stock",
           slotKey,
+          hourSlot,
           recordId: slotKey,
         });
       } else {
@@ -122,6 +130,7 @@ async function buildScheduledNotifications(
           view: "alerts",
           focus: "stock",
           slotKey,
+          hourSlot,
           recordId: slotKey,
         });
       }
@@ -173,6 +182,17 @@ function buildKeywordNotifications(
   return notifications;
 }
 
+async function recordCronCheck() {
+  try {
+    const at = new Date().toISOString();
+    await markCronChecked(at);
+    return at;
+  } catch (error) {
+    console.error("크론 확인 시각 저장 실패:", error);
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   try {
     if (!isCronAuthorized(request)) {
@@ -183,22 +203,35 @@ export async function GET(request: Request) {
     const force = searchParams.get("force") === "true";
     const test = searchParams.get("test") === "true";
 
-    const { hours, minutes, timeStr, dateStr } = getKstTimeParts();
-    const hourSlot = `${String(hours).padStart(2, "0")}:00`;
-    const isNewsTime = SELECTABLE_NEWS_HOURS.includes(hourSlot);
-    const isStockTime = STOCK_HOURS.includes(hourSlot);
-    const shouldSendScheduled = force || test || isNewsTime || isStockTime;
+    const { hours, timeStr, dateStr } = getKstTimeParts();
+    const currentSlot: ScheduledPushSlot = {
+      dateStr,
+      hours,
+      hourSlot: `${String(hours).padStart(2, "0")}:00`,
+    };
+    const slots = force || test ? [currentSlot] : slotsForScheduledPush(new Date());
+    const hourSlot = currentSlot.hourSlot;
+    const shouldSendScheduled =
+      force ||
+      test ||
+      slots.some(
+        (slot) =>
+          SELECTABLE_NEWS_HOURS.includes(slot.hourSlot) ||
+          STOCK_HOURS.includes(slot.hourSlot),
+      );
 
     const subscriptions = await getSubscriptions();
     const subscriberNewsHours = subscriptions.map((sub) =>
       normalizeScheduledNewsHours(sub.scheduledNewsHours),
     );
     if (subscriptions.length === 0) {
+      const cronCheckedAt = await recordCronCheck();
       return NextResponse.json({
         message:
           "등록된 푸시 구독자가 없습니다. iPhone 홈 화면 PWA에서 알림을 다시 켜 주세요.",
         kstTime: timeStr,
         hourSlot,
+        cronCheckedAt,
         storage: getPushStorageInfo(),
       });
     }
@@ -208,10 +241,12 @@ export async function GET(request: Request) {
     );
 
     if (!shouldSendScheduled && !hasKeywordSubscribers) {
+      const cronCheckedAt = await recordCronCheck();
       return NextResponse.json({
         message: `스케줄 시간이 아니며 키워드 구독자도 없습니다. 현재 KST: ${timeStr}`,
         kstTime: timeStr,
         hourSlot,
+        cronCheckedAt,
         subscriberNewsHours,
       });
     }
@@ -268,15 +303,19 @@ export async function GET(request: Request) {
     }
 
     const scheduledNotifications = shouldSendScheduled
-      ? await buildScheduledNotifications(
-          force,
-          test,
-          hours,
-          minutes,
-          dateStr,
-          featuredNews,
-          marketData,
-        )
+      ? (
+          await Promise.all(
+            slots.map((slot) =>
+              buildScheduledNotifications(
+                force,
+                test,
+                slot,
+                featuredNews,
+                marketData,
+              ),
+            ),
+          )
+        ).flat()
       : [];
 
     const perSubscriptionNotifications: Array<{
@@ -291,7 +330,7 @@ export async function GET(request: Request) {
         const userNewsHours = normalizeScheduledNewsHours(sub.scheduledNewsHours);
         for (const alert of scheduledNotifications) {
           if (alert.focus === "news") {
-            if (force || test || userNewsHours.includes(hourSlot)) {
+            if (force || test || userNewsHours.includes(alert.hourSlot || hourSlot)) {
               notifications.push(alert);
             }
           } else {
@@ -311,10 +350,12 @@ export async function GET(request: Request) {
     }
 
     if (perSubscriptionNotifications.length === 0) {
+      const cronCheckedAt = await recordCronCheck();
       return NextResponse.json({
         message: "발송할 알림 데이터가 없습니다.",
         kstTime: timeStr,
         hourSlot,
+        cronCheckedAt,
         breakingNewsCount: breakingNews.length,
         subscriberNewsHours,
         matchedNewsHourCount: subscriptions.filter(
@@ -421,9 +462,12 @@ export async function GET(request: Request) {
       await saveSubscriptions(updatedSubscriptions);
     }
 
+    const cronCheckedAt = await recordCronCheck();
+
     return NextResponse.json({
       success: true,
       sentCount,
+      cronCheckedAt,
       failedCleanedCount: failedEndpoints.length,
       subscriberCount: subscriptions.length,
       kstTime: timeStr,

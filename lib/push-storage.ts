@@ -345,6 +345,46 @@ export async function findOwnedSubscription(
   return match;
 }
 
+export async function readAppJson<T>(
+  key: string,
+  fileName: string,
+  blobPath: string,
+  fallback: T,
+): Promise<T> {
+  if (usePostgresStorage()) {
+    return readPostgresJson<T>(key, fallback);
+  }
+  if (useBlobStorage()) {
+    return readBlobJson<T>(blobPath, fallback);
+  }
+  if (isVercelRuntime()) {
+    return fallback;
+  }
+  return readFileJson<T>(path.join(paths.dir, fileName), fallback);
+}
+
+export async function writeAppJson(
+  key: string,
+  fileName: string,
+  blobPath: string,
+  data: unknown,
+) {
+  if (usePostgresStorage()) {
+    await writePostgresJson(key, data);
+    return;
+  }
+  if (useBlobStorage()) {
+    await writeBlobJson(blobPath, data);
+    return;
+  }
+  if (isVercelRuntime()) {
+    throw new Error(
+      "저장소가 없습니다. Neon(DATABASE_URL) 또는 Blob을 연결하세요.",
+    );
+  }
+  writeFileJson(path.join(paths.dir, fileName), data);
+}
+
 export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
   if (usePostgresStorage()) {
     return readPostgresJson<PushSubscriptionRecord[]>(PG_SUBSCRIPTIONS_KEY, []);
@@ -481,6 +521,26 @@ export async function markSentSlot(slotKey: string) {
 export async function hasSentSlot(slotKey: string): Promise<boolean> {
   const sentSlots = await getSentSlots();
   return Boolean(sentSlots[slotKey]);
+}
+
+const CRON_CHECK_KEY = "push-cron-check";
+const CRON_CHECK_FILE = "push-cron-check.json";
+const CRON_CHECK_BLOB_PATH = "push/cron-check.json";
+
+export async function markCronChecked(at = new Date().toISOString()) {
+  await writeAppJson(CRON_CHECK_KEY, CRON_CHECK_FILE, CRON_CHECK_BLOB_PATH, {
+    at,
+  });
+}
+
+export async function getCronCheckedAt(): Promise<string | null> {
+  const stored = await readAppJson<{ at?: string }>(
+    CRON_CHECK_KEY,
+    CRON_CHECK_FILE,
+    CRON_CHECK_BLOB_PATH,
+    {},
+  );
+  return typeof stored.at === "string" && stored.at ? stored.at : null;
 }
 
 export function getKstTimeParts(date = new Date()) {

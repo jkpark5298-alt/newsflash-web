@@ -38,6 +38,7 @@ import {
   STOCK_HOURS,
   STOCK_HOURS_LABEL,
   formatNewsHoursLabel,
+  isCronCheckStale,
   normalizeScheduledNewsHours,
 } from "@/lib/alert-schedule";
 import type {
@@ -165,6 +166,7 @@ export default function Home() {
   const [serverSubscriptionCount, setServerSubscriptionCount] = useState<number | null>(null);
   const [serverNewsHours, setServerNewsHours] = useState<string[] | null>(null);
   const [cronSecretConfigured, setCronSecretConfigured] = useState<boolean | null>(null);
+  const [lastCronAt, setLastCronAt] = useState<string | null>(null);
   const [pushReady, setPushReady] = useState<boolean | null>(null);
   const [pushConnectionMessage, setPushConnectionMessage] = useState<string>("");
   const [isConnectingPush, setIsConnectingPush] = useState(false);
@@ -403,6 +405,7 @@ export default function Home() {
       const count = typeof data.count === "number" ? data.count : 0;
       setServerSubscriptionCount(count);
       setCronSecretConfigured(Boolean(data.cronSecretConfigured));
+      setLastCronAt(typeof data.lastCronAt === "string" ? data.lastCronAt : null);
       setPushReady(Boolean(data.pushReady));
       const settings = Array.isArray(data.subscriberSettings)
         ? data.subscriberSettings
@@ -422,6 +425,7 @@ export default function Home() {
       console.error("구독 상태 조회 에러:", error);
       setServerSubscriptionCount(null);
       setServerNewsHours(null);
+      setLastCronAt(null);
       return null;
     }
   };
@@ -2932,6 +2936,9 @@ export default function Home() {
                           : cronSecretConfigured
                             ? "설정됨"
                             : "미설정"}
+                        {lastCronAt
+                          ? ` · 마지막 확인 ${new Date(lastCronAt).toLocaleString("ko-KR")}${isCronCheckStale(lastCronAt) ? " · 지연" : ""}`
+                          : " · 마지막 확인 없음"}
                       </p>
                       <p>
                         · 푸시 저장소:{" "}

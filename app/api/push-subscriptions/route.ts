@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   findOwnedSubscription,
+  getCronCheckedAt,
   getPushStorageInfo,
   getSubscriptions,
   getVapidPublicKey,
@@ -26,9 +27,14 @@ export async function GET() {
       vapidPublicKey,
       storage,
       cronSecretConfigured: Boolean(process.env.CRON_SECRET),
+      lastCronAt: await getCronCheckedAt(),
       pushReady:
         subs.length >= 1 &&
         (storage.postgresConfigured || storage.blobConfigured),
+      subscriberSettings: subs.map((sub) => ({
+        scheduledAlertEnabled: sub.scheduledAlertEnabled !== false,
+        scheduledNewsHours: normalizeScheduledNewsHours(sub.scheduledNewsHours),
+      })),
     },
     {
       headers: {

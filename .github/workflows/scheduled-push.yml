@@ -4,10 +4,9 @@ name: Scheduled Push Cron
 # /api/send-scheduled-push 를 주기적으로 호출합니다.
 on:
   schedule:
-    # 매시 정각(UTC=KST 정각) — 정기 뉴스/증시
-    - cron: "0 * * * *"
-    # 키워드 속보 검사용. 화면을 켜 둔 5분 확인과 간격을 맞춘다.
-    - cron: "*/5 * * * *"
+    # 5분 호출은 cron-job.org가 담당한다.
+    # GitHub 예비 호출은 정각을 피한다. 정각은 예약이 빠지기 쉽다.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -23,7 +22,7 @@ jobs:
             echo "GitHub Secrets에 CRON_SECRET이 없습니다. Vercel의 CRON_SECRET과 같은 값을 넣어주세요."
             exit 1
           fi
-          curl -fsS -X GET \
+          curl -fsS --retry 3 --retry-delay 5 --retry-all-errors -X GET \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "Accept: application/json" \
             --max-time 55 \

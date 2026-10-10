@@ -32,3 +32,44 @@ export function formatNewsHoursLabel(hours: string[]): string {
     .map((h) => h.slice(0, 2))
     .join(" · ");
 }
+
+export type ScheduledPushSlot = {
+  dateStr: string;
+  hours: number;
+  hourSlot: string;
+};
+
+function kstSlot(date: Date): ScheduledPushSlot {
+  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  const hours = kst.getUTCHours();
+  const dateStr = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth() + 1).padStart(2, "0")}-${String(kst.getUTCDate()).padStart(2, "0")}`;
+  return {
+    dateStr,
+    hours,
+    hourSlot: `${String(hours).padStart(2, "0")}:00`,
+  };
+}
+
+/** Current KST hour, plus the previous hour so a missed slot is sent on the next call. */
+export function slotsForScheduledPush(now: Date): ScheduledPushSlot[] {
+  const current = kstSlot(now);
+  const previous = kstSlot(new Date(now.getTime() - 60 * 60 * 1000));
+  if (
+    previous.dateStr === current.dateStr &&
+    previous.hourSlot === current.hourSlot
+  ) {
+    return [current];
+  }
+  return [previous, current];
+}
+
+export function isCronCheckStale(
+  checkedAt: string | null | undefined,
+  now = new Date(),
+  staleAfterMs = 10 * 60 * 1000,
+): boolean {
+  if (!checkedAt) return true;
+  const checkedMs = new Date(checkedAt).getTime();
+  if (Number.isNaN(checkedMs)) return true;
+  return now.getTime() - checkedMs > staleAfterMs;
+}
