@@ -36,6 +36,9 @@ export type CompactMarketCard = {
   value: string;
   change: string;
   changeTone?: "up" | "down" | "neutral";
+  policyId?: "us" | "korea";
+  updatedAt?: string | null;
+  reason?: string;
 };
 
 export type MarketItem = {
@@ -47,6 +50,14 @@ export type MarketItem = {
   changeRate: string;
   status: string;
   description: string;
+  details?: Array<{
+    id?: "us" | "korea";
+    label: string;
+    value: string;
+    changeRate: string;
+    updatedAt?: string | null;
+    reason?: string;
+  }>;
 };
 
 export interface Article {

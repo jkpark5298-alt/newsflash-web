@@ -145,6 +145,11 @@ export default function Home() {
   const [marketData, setMarketData] = useState<MarketItem[]>([]);
   const [marketFetchedAt, setMarketFetchedAt] = useState<string | null>(null);
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [policyEditId, setPolicyEditId] = useState<"us" | "korea" | null>(null);
+  const [policyDraftValue, setPolicyDraftValue] = useState("");
+  const [policyDraftReason, setPolicyDraftReason] = useState("");
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyEditError, setPolicyEditError] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, TranslationState>>({});
   const [isEconomyNewsExpanded, setIsEconomyNewsExpanded] = useState(false);
@@ -1059,6 +1064,44 @@ export default function Home() {
     }
   }
 
+  const startPolicyEdit = (item: CompactMarketCard) => {
+    if (!item.policyId) return;
+    setPolicyEditId(item.policyId);
+    setPolicyDraftValue(item.value);
+    setPolicyDraftReason("");
+    setPolicyEditError("");
+  };
+
+  const savePolicyRate = async () => {
+    if (!policyEditId) return;
+    setPolicySaving(true);
+    setPolicyEditError("");
+
+    try {
+      const response = await fetch("/api/policy-rates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: policyEditId,
+          value: policyDraftValue,
+          reason: policyDraftReason,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || "기준금리를 저장하지 못했습니다.");
+      }
+
+      setPolicyEditId(null);
+      await fetchMarketData();
+    } catch (error) {
+      setPolicyEditError(error instanceof Error ? error.message : "기준금리를 저장하지 못했습니다.");
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
   async function fetchBreakingNews() {
     try {
       const breakingResponse = await fetch("/api/breaking", {
@@ -1605,6 +1648,24 @@ export default function Home() {
         { label: "한국 기준금리", value: "준비 중", change: "-", changeTone: "neutral" },
         { label: "미국 10년물", value: "준비 중", change: "-", changeTone: "neutral" },
       ];
+    }
+
+    if (Array.isArray(marketItem.details) && marketItem.details.length > 0) {
+      return marketItem.details.map((detail) => ({
+        label: detail.label,
+        value: detail.value,
+        change: detail.changeRate || "-",
+        changeTone: detail.id
+          ? "neutral"
+          : detail.changeRate?.startsWith("-")
+            ? "down"
+            : detail.changeRate?.startsWith("+")
+              ? "up"
+              : "neutral",
+        policyId: detail.id,
+        updatedAt: detail.updatedAt,
+        reason: detail.reason,
+      }));
     }
 
     const secondaryEntries = marketItem.change.split(" · ").map((entry) => entry.trim());
@@ -3519,9 +3580,71 @@ export default function Home() {
                     className="grid grid-cols-[1fr_96px] gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-md"
                   >
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{item.label}</p>
-                      <p className="mt-1 text-2xl font-extrabold tracking-tight text-gray-900">{item.value}</p>
-                      <p className="mt-1 text-sm text-gray-500">{item.change}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{item.label}</p>
+                        {item.policyId && policyEditId !== item.policyId ? (
+                          <button
+                            type="button"
+                            onClick={() => startPolicyEdit(item)}
+                            className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                          >
+                            수정
+                          </button>
+                        ) : null}
+                      </div>
+                      {item.policyId && policyEditId === item.policyId ? (
+                        <form
+                          className="mt-2 space-y-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void savePolicyRate();
+                          }}
+                        >
+                          <input
+                            value={policyDraftValue}
+                            onChange={(event) => setPolicyDraftValue(event.target.value)}
+                            aria-label={`${item.label} 기준값`}
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900"
+                          />
+                          <input
+                            value={policyDraftReason}
+                            onChange={(event) => setPolicyDraftReason(event.target.value)}
+                            aria-label={`${item.label} 수정 사유`}
+                            placeholder="수정 사유"
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800"
+                          />
+                          {policyEditError ? (
+                            <p className="text-xs text-red-600">{policyEditError}</p>
+                          ) : null}
+                          <div className="flex gap-2">
+                            <button
+                              type="submit"
+                              disabled={policySaving}
+                              className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                            >
+                              {policySaving ? "저장 중" : "저장"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPolicyEditId(null)}
+                              className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                            >
+                              취소
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <p className="mt-1 text-2xl font-extrabold tracking-tight text-gray-900">{item.value}</p>
+                          <p className="mt-1 text-sm text-gray-500">{item.change}</p>
+                          {item.updatedAt ? (
+                            <p className="mt-1 text-xs text-gray-500">
+                              {new Date(item.updatedAt).toLocaleString("ko-KR")} 수정
+                              {item.reason ? ` · ${item.reason}` : ""}
+                            </p>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                     <MiniTrend tone={item.changeTone} />
                   </article>

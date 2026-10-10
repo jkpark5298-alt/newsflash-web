@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server';
+import { getPolicyRates } from '@/lib/policy-rates';
 
 type MarketKey = 'kospi' | 'kosdaq' | 'usdkrw' | 'us-market' | 'rates';
 type MarketStatus = 'ok' | 'delay' | 'error';
 
 type MarketDetail = {
+  id?: 'us' | 'korea';
   label: string;
   value: string;
   changeRate: string;
   trend: number[];
+  updatedAt?: string | null;
+  reason?: string;
 };
 
 type MarketItem = {
@@ -81,8 +85,6 @@ const US_MARKET_TARGETS = [
   },
 ];
 
-const US_POLICY_RATE_VALUE = '3.50~3.75%';
-const KOREA_POLICY_RATE_VALUE = '2.50%';
 const US_TREASURY_10Y_SYMBOL = '^TNX';
 
 function formatNumber(value: number, fractionDigits = 2) {
@@ -304,30 +306,43 @@ async function fetchUsTreasury10Year() {
 }
 
 async function buildRatesItem(): Promise<MarketItem> {
-  const treasury10Year = await fetchUsTreasury10Year();
+  const [treasury10Year, policyRates] = await Promise.all([
+    fetchUsTreasury10Year(),
+    getPolicyRates(),
+  ]);
+  const usRate = policyRates.find((item) => item.id === 'us');
+  const koreaRate = policyRates.find((item) => item.id === 'korea');
+  const usValue = usRate?.value || '3.50~3.75%';
+  const koreaValue = koreaRate?.value || '2.50%';
 
   return {
     key: 'rates',
     label: '금리',
     symbol: `FED/BOK/${US_TREASURY_10Y_SYMBOL}`,
-    value: `미국 ${US_POLICY_RATE_VALUE}`,
-    change: `한국 ${KOREA_POLICY_RATE_VALUE} · 미국 10년물 ${treasury10Year.value}`,
+    value: `미국 ${usValue}`,
+    change: `한국 ${koreaValue} · 미국 10년물 ${treasury10Year.value}`,
     changeRate: treasury10Year.changeRate,
     status: treasury10Year.value === '확인 중' ? 'delay' : 'ok',
     description: '미국 기준금리 · 한국 기준금리 · 미국 10년물',
     trend: treasury10Year.trend,
     details: [
       {
+        id: 'us',
         label: '미국 기준금리',
-        value: US_POLICY_RATE_VALUE,
+        value: usValue,
         changeRate: '수동 기준값',
         trend: [],
+        updatedAt: usRate?.updatedAt ?? null,
+        reason: usRate?.reason ?? '',
       },
       {
+        id: 'korea',
         label: '한국 기준금리',
-        value: KOREA_POLICY_RATE_VALUE,
+        value: koreaValue,
         changeRate: '수동 기준값',
         trend: [],
+        updatedAt: koreaRate?.updatedAt ?? null,
+        reason: koreaRate?.reason ?? '',
       },
       {
         label: '미국 10년물',
@@ -338,6 +353,8 @@ async function buildRatesItem(): Promise<MarketItem> {
     ],
   };
 }
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const fetchedAt = new Date().toISOString();
