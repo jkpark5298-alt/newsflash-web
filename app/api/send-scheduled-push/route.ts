@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import {
+  isAlreadySeenArticle,
+  rememberSeenArticle,
+} from "@/lib/breaking-select";
+import {
   getKstTimeParts,
   getPushStorageInfo,
   getSubscriptions,
@@ -139,17 +143,18 @@ function buildKeywordNotifications(
   const notifications: NotificationPayload[] = [];
 
   for (const article of breakingNews) {
-    const link = article.link || article.title || "";
-    if (!link || seenLinks.has(link)) continue;
+    const link = article.link || "";
+    const title = article.title || "";
+    if (isAlreadySeenArticle(seenLinks, title, link)) continue;
 
-    const textToSearch = `${article.title || ""} ${article.description || ""}`;
+    const textToSearch = `${title} ${article.description || ""}`;
     const matchedKeyword = subscription.alertKeywords.find((keyword) =>
       matchesKeyword(textToSearch, keyword),
     );
 
     if (!matchedKeyword) continue;
 
-    seenLinks.add(link);
+    rememberSeenArticle(seenLinks, title, link);
     notifications.push({
       title: `🚨 [속보 알림: ${matchedKeyword}] ${article.title || "새 속보"}`,
       body: article.description || "자세한 내용은 클릭하여 확인하세요.",
@@ -209,6 +214,13 @@ export async function GET(request: Request) {
       title?: string;
       description?: string;
       link?: string;
+      source?: string;
+    }> = [];
+    let featuredNews: Array<{
+      title?: string;
+      description?: string;
+      link?: string;
+      source?: string;
     }> = [];
 
     if (shouldSendScheduled || hasKeywordSubscribers) {
@@ -219,6 +231,10 @@ export async function GET(request: Request) {
         if (newsRes.ok) {
           const newsData = await newsRes.json();
           breakingNews = Array.isArray(newsData.articles) ? newsData.articles : [];
+          featuredNews =
+            Array.isArray(newsData.featured) && newsData.featured.length > 0
+              ? newsData.featured
+              : breakingNews;
         }
       } catch (error) {
         console.error("속보 데이터 조회 실패:", error);
@@ -249,7 +265,7 @@ export async function GET(request: Request) {
           hours,
           minutes,
           dateStr,
-          breakingNews,
+          featuredNews,
           marketData,
         )
       : [];

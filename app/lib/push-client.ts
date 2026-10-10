@@ -24,3 +24,39 @@ export function serializePushSubscription(subscription: PushSubscription) {
     },
   };
 }
+
+export async function syncExistingPushPreferences(settings: {
+  alertEnabled?: boolean;
+  alertKeywords?: string[];
+  scheduledAlertEnabled?: boolean;
+  scheduledNewsHours?: string[];
+}) {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+    return false;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+
+  if (!subscription) {
+    return false;
+  }
+
+  const serialized = serializePushSubscription(subscription);
+
+  if (!serialized.endpoint || !serialized.keys?.p256dh || !serialized.keys?.auth) {
+    return false;
+  }
+
+  const response = await fetch("/api/push-preferences", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      endpoint: serialized.endpoint,
+      keys: serialized.keys,
+      ...settings,
+    }),
+  });
+
+  return response.ok;
+}

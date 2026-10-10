@@ -61,12 +61,49 @@ import {
   isPoliticalCategory,
 } from "./lib/issue-clustering";
 import { serializePushSubscription } from "./lib/push-client";
+import {
+  isAlertKeywordValid,
+  isAlreadySeenArticle,
+  isKeywordMatch,
+  rememberSeenArticle,
+} from "@/lib/breaking-select";
+
+function ArticleThumb({
+  imageUrl,
+  title,
+  fallback,
+}: {
+  imageUrl?: string;
+  title: string;
+  fallback: string;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <div className="flex-shrink-0 w-20 h-20 md:w-24 md:h-24 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center">
+      {imageUrl && !failed ? (
+        <img
+          src={imageUrl}
+          alt={title}
+          className="w-full h-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <div className="text-3xl md:text-4xl">{fallback}</div>
+      )}
+    </div>
+  );
+}
 
 export type { ScheduledNewsAlertItem, ScheduledStockAlertItem } from "./lib/home-types";
 
 
 export default function Home() {
   const [breakingNews, setBreakingNews] = useState<Article[]>([]);
+  const [featuredBreaking, setFeaturedBreaking] = useState<Article[]>([]);
+  const [breakingUpdatedAt, setBreakingUpdatedAt] = useState<string | null>(null);
+  const [breakingError, setBreakingError] = useState<string | null>(null);
+  const [breakingReady, setBreakingReady] = useState(false);
   const [internationalNews, setInternationalNews] = useState<Article[]>([]);
   const [cartoons, setCartoons] = useState<Cartoon[]>([]);
   const [communityIssues, setCommunityIssues] = useState<CommunityIssue[]>([]);
@@ -304,6 +341,7 @@ export default function Home() {
   };
 
   const seenArticlesRef = useRef<Set<string>>(new Set());
+  const breakingCountRef = useRef(0);
   const sentScheduledAlertsRef = useRef<Set<string>>(new Set());
 
   // Base64 VAPID Key를 Uint8Array로 변환
@@ -821,19 +859,17 @@ export default function Home() {
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (!alertEnabled || alertKeywords.length === 0 || Notification.permission !== "granted") return;
 
-    const newArticles = articles.filter(art => !seenArticlesRef.current.has(art.link));
+    const newArticles = articles.filter(
+      (art) => !isAlreadySeenArticle(seenArticlesRef.current, art.title, art.link),
+    );
     if (newArticles.length === 0) return;
 
     newArticles.forEach(article => {
       const textToSearch = `${article.title} ${article.description}`.toLowerCase();
       
-      const matchedKeyword = alertKeywords.find(kw => {
-        if (kw.includes("+")) {
-          const subKeywords = kw.split("+").map(s => s.trim().toLowerCase()).filter(Boolean);
-          return subKeywords.length > 0 && subKeywords.every(sub => textToSearch.includes(sub));
-        }
-        return textToSearch.includes(kw.trim().toLowerCase());
-      });
+      const matchedKeyword = alertKeywords.find((kw) =>
+        isKeywordMatch(textToSearch, kw),
+      );
 
       if (matchedKeyword) {
         try {
@@ -863,6 +899,11 @@ export default function Home() {
     e.preventDefault();
     const trimmed = keywordInput.trim();
     if (!trimmed) return;
+
+    if (!isAlertKeywordValid(trimmed)) {
+      alert("키워드는 2글자 이상으로 등록해 주세요. 예: 환율, 금리+한국");
+      return;
+    }
 
     if (editingIndex !== null) {
       setAlertKeywords((current) => {
@@ -990,19 +1031,38 @@ export default function Home() {
 
       const breakingData = await breakingResponse.json();
       const articles = breakingData.articles || [];
+      const featured = Array.isArray(breakingData.featured) && breakingData.featured.length > 0
+        ? breakingData.featured
+        : articles;
 
       if (seenArticlesRef.current.size === 0) {
-        articles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+        articles.forEach((art: Article) =>
+          rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
+        );
       } else {
         checkNewArticlesForKeywords(articles);
-        articles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+        articles.forEach((art: Article) =>
+          rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
+        );
       }
 
+      breakingCountRef.current = articles.length;
       setBreakingNews(articles);
+      setFeaturedBreaking(featured);
+      setBreakingUpdatedAt(breakingData.lastUpdated || new Date().toISOString());
+      setBreakingError(null);
     } catch (err) {
       console.error("주요 속보 로딩 에러:", err);
-      setBreakingNews([]);
-      setError("일부 뉴스 데이터 연동이 지연되고 있습니다.");
+      setBreakingError(
+        breakingCountRef.current > 0
+          ? "주요 속보를 갱신하지 못했습니다. 이전 목록을 보여 줍니다."
+          : "주요 속보를 불러오지 못했습니다.",
+      );
+      if (breakingCountRef.current === 0) {
+        setError("일부 뉴스 데이터 연동이 지연되고 있습니다.");
+      }
+    } finally {
+      setBreakingReady(true);
     }
   }
 
@@ -1117,6 +1177,29 @@ export default function Home() {
       console.error("보관 기사 저장 에러:", err);
     }
   }, [savedArticles]);
+
+  const breakingUpdatedLabel = useMemo(() => {
+    if (!breakingUpdatedAt) {
+      return "";
+    }
+
+    const date = new Date(breakingUpdatedAt);
+
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+
+    return date.toLocaleTimeString("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }, [breakingUpdatedAt]);
+
+  const breakingEmptyMessage = breakingError
+    ? breakingError
+    : breakingReady
+      ? "표시할 주요 속보가 없습니다."
+      : "주요 속보를 불러오는 중...";
 
   const todayText = useMemo(() => {
     return new Date().toLocaleDateString("ko-KR", {
@@ -1312,10 +1395,11 @@ export default function Home() {
       const newsHours = normalizeScheduledNewsHours(scheduledNewsHours);
       if (newsHours.includes(hourSlot)) {
         const alertKey = `${dateStr}-${hourSlot}-news`;
-        if (!sentScheduledAlertsRef.current.has(alertKey) && breakingNews.length > 0) {
+        if (!sentScheduledAlertsRef.current.has(alertKey) && (featuredBreaking.length > 0 || breakingNews.length > 0)) {
           sentScheduledAlertsRef.current.add(alertKey);
           
-          const top5 = breakingNews.slice(0, 5);
+          const pool = featuredBreaking.length > 0 ? featuredBreaking : breakingNews;
+          const top5 = pool.slice(0, 5);
           const title = `📰 [정기 뉴스 알림] ${hours}시 최신 뉴스 5선`;
           const body = top5.map((art, idx) => `${idx + 1}. ${art.title}`).join("\n");
           
@@ -1410,7 +1494,7 @@ export default function Home() {
 
     const timer = setInterval(checkScheduledAlerts, 20000);
     return () => clearInterval(timer);
-  }, [scheduledAlertEnabled, scheduledNewsHours, breakingNews, koreanMarketCards, usMarketCards]);
+  }, [scheduledAlertEnabled, scheduledNewsHours, breakingNews, featuredBreaking, koreanMarketCards, usMarketCards]);
 
   const fxRateCard = useMemo<CompactMarketCard>(() => {
     const indicator = economyIndicators.find((item) => item.key === "usdkrw");
@@ -1677,6 +1761,10 @@ export default function Home() {
       case "연합뉴스":
       case "연합뉴스TV":
         return "📰";
+      case "뉴시스":
+        return "📰";
+      case "YTN 최신뉴스":
+        return "📡";
       case "JTBC":
         return "📡";
       case "경향신문":
@@ -1708,7 +1796,10 @@ export default function Home() {
         return "text-purple-600";
       case "연합뉴스":
       case "연합뉴스TV":
+      case "뉴시스":
         return "text-green-600";
+      case "YTN 최신뉴스":
+        return "text-indigo-600";
       case "JTBC":
         return "text-red-600";
       case "경향신문":
@@ -1812,6 +1903,11 @@ export default function Home() {
         <span className="text-gray-400 text-sm">
           {getRelativeTime(article.pubDate)}
         </span>
+        {article.category && (
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+            {article.category}
+          </span>
+        )}
       </div>
     );
   };
@@ -2054,22 +2150,11 @@ export default function Home() {
             className="border-b border-gray-100 p-4 last:border-b-0"
           >
             <div className="flex gap-4">
-              <div className="flex-shrink-0 w-20 h-20 md:w-24 md:h-24 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center">
-                {article.imageUrl ? (
-                  <img
-                    src={article.imageUrl}
-                    alt={article.title}
-                    className="w-full h-full object-cover"
-                    onError={(event) => {
-                      event.currentTarget.style.display = "none";
-                    }}
-                  />
-                ) : (
-                  <div className="text-3xl md:text-4xl">
-                    {getSourceEmoji(article.source)}
-                  </div>
-                )}
-              </div>
+              <ArticleThumb
+                imageUrl={article.imageUrl}
+                title={article.title}
+                fallback={getSourceEmoji(article.source)}
+              />
 
               <div className="flex-1 min-w-0">
                 {renderArticleMeta(article)}
@@ -2317,11 +2402,11 @@ export default function Home() {
                       속보 전체보기
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
-                      국내·국제·신문사 등 주요 속보를 모아 확인합니다.
+                      같은 사건은 하나로 묶은 최신 국내 속보입니다.
                     </p>
                   </div>
                 </div>
-                {renderNewsList(breakingNews, "주요 속보를 불러오는 중...", 20)}
+                {renderNewsList(breakingNews, breakingEmptyMessage, 20)}
               </div>
             )}
 
@@ -3338,8 +3423,12 @@ export default function Home() {
               <div>
                 <h2 className="text-3xl font-bold text-gray-800">주요 속보</h2>
                 <p className="text-sm text-gray-500 mt-1">
-                  5분마다 자동 갱신됩니다.
+                  여러 매체가 함께 다룬 국내 속보를 우선 표시합니다.
+                  {breakingUpdatedLabel ? ` ${breakingUpdatedLabel} 갱신.` : " 5분마다 자동 갱신됩니다."}
                 </p>
+                {breakingError && featuredBreaking.length > 0 && (
+                  <p className="text-sm text-amber-700 mt-1">{breakingError}</p>
+                )}
               </div>
             </div>
             <Link
@@ -3350,7 +3439,11 @@ export default function Home() {
             </Link>
           </div>
 
-          {renderNewsList(breakingNews, "주요 속보를 불러오는 중...", 8)}
+          {renderNewsList(
+            featuredBreaking.length > 0 ? featuredBreaking : breakingNews,
+            breakingEmptyMessage,
+            8,
+          )}
         </section>
 
         <section id="economy-news" className="mb-12 scroll-mt-32">

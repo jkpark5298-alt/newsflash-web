@@ -2,6 +2,40 @@
 
 import { useEffect, useMemo, useState, useRef } from 'react';
 import Link from 'next/link';
+import { syncExistingPushPreferences } from '@/app/lib/push-client';
+import {
+  isAlertKeywordValid,
+  isAlreadySeenArticle,
+  isKeywordMatch,
+  rememberSeenArticle,
+} from '@/lib/breaking-select';
+
+function BreakingThumb({
+  imageUrl,
+  title,
+  fallback,
+}: {
+  imageUrl?: string;
+  title: string;
+  fallback: string;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <span className="flex h-full w-full items-center justify-center">
+      {imageUrl && !failed ? (
+        <img
+          src={imageUrl}
+          alt={title}
+          className="h-full w-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="text-4xl">{fallback}</span>
+      )}
+    </span>
+  );
+}
 
 const BREAKING_REFRESH_MS = 5 * 60 * 1000;
 const ALERT_KEYWORDS_STORAGE_KEY = 'newsflash.alertKeywords.v1';
@@ -154,19 +188,17 @@ export default function BreakingPage() {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (!alertEnabled || alertKeywords.length === 0 || Notification.permission !== 'granted') return;
 
-    const newArticles = newsArticles.filter(art => !seenArticlesRef.current.has(art.link));
+    const newArticles = newsArticles.filter(
+      (art) => !isAlreadySeenArticle(seenArticlesRef.current, art.title, art.link),
+    );
     if (newArticles.length === 0) return;
 
     newArticles.forEach(article => {
       const textToSearch = `${article.title} ${article.description}`.toLowerCase();
       
-      const matchedKeyword = alertKeywords.find(kw => {
-        if (kw.includes('+')) {
-          const subKeywords = kw.split('+').map(s => s.trim().toLowerCase()).filter(Boolean);
-          return subKeywords.length > 0 && subKeywords.every(sub => textToSearch.includes(sub));
-        }
-        return textToSearch.includes(kw.trim().toLowerCase());
-      });
+      const matchedKeyword = alertKeywords.find((kw) =>
+        isKeywordMatch(textToSearch, kw),
+      );
 
       if (matchedKeyword) {
         try {
@@ -196,6 +228,11 @@ export default function BreakingPage() {
     e.preventDefault();
     const trimmed = keywordInput.trim();
     if (!trimmed) return;
+
+    if (!isAlertKeywordValid(trimmed)) {
+      alert('키워드는 2글자 이상으로 등록해 주세요. 예: 환율, 금리+한국');
+      return;
+    }
 
     if (editingIndex !== null) {
       setAlertKeywords((current) => {
@@ -232,22 +269,37 @@ export default function BreakingPage() {
     }
   };
 
-  const saveKeywordSettings = () => {
+  const saveKeywordSettings = async () => {
     try {
       window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(alertKeywords));
       window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(alertEnabled));
+
+      let synced = false;
+
+      try {
+        synced = await syncExistingPushPreferences({
+          alertEnabled,
+          alertKeywords,
+        });
+      } catch (syncError) {
+        console.error('서버 푸시 설정 동기화 실패:', syncError);
+      }
+
+      const syncNote = synced
+        ? ' 서버 푸시에도 반영했습니다.'
+        : ' 이 브라우저 알림으로 저장했습니다. 홈에서 푸시를 연결하면 서버 알림에도 함께 반영됩니다.';
 
       if (alertEnabled && Notification.permission !== 'granted') {
         Notification.requestPermission().then((permission) => {
           setNotificationPermission(permission);
           if (permission === 'granted') {
-            alert('키워드 알림 설정이 저장되었으며 알림 권한이 허용되었습니다.');
+            alert(`키워드 알림 설정이 저장되었으며 알림 권한이 허용되었습니다.${syncNote}`);
           } else {
-            alert('키워드 알림 설정이 저장되었으나, 알림 권한이 허용되지 않았습니다. 브라우저 설정에서 확인바랍니다.');
+            alert(`키워드 알림 설정이 저장되었으나, 알림 권한이 허용되지 않았습니다.${syncNote}`);
           }
         });
       } else {
-        alert('알림 설정이 정상적으로 저장되었습니다.');
+        alert(`알림 설정이 정상적으로 저장되었습니다.${syncNote}`);
       }
     } catch (err) {
       console.error('알림 설정 저장 오류:', err);
@@ -293,10 +345,14 @@ export default function BreakingPage() {
       const dataArticles = data.articles || [];
 
       if (seenArticlesRef.current.size === 0) {
-        dataArticles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+        dataArticles.forEach((art: Article) =>
+          rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
+        );
       } else {
         checkNewArticlesForKeywords(dataArticles);
-        dataArticles.forEach((art: Article) => seenArticlesRef.current.add(art.link));
+        dataArticles.forEach((art: Article) =>
+          rememberSeenArticle(seenArticlesRef.current, art.title, art.link),
+        );
       }
 
       setArticles(dataArticles);
@@ -699,7 +755,7 @@ export default function BreakingPage() {
             <div className="text-center">
               <h1 className="text-2xl font-bold text-gray-900">속보</h1>
               <p className="mt-1 text-xs text-gray-500">
-                최근 12시간 이내 국내·국제 뉴스 · 5분마다 자동 갱신
+                최근 12시간 국내 속보 · 같은 사건은 한 건 · 5분마다 자동 갱신
                 {getFormattedUpdateTime() &&
                   ` · 마지막 업데이트 ${getFormattedUpdateTime()}`}
               </p>
@@ -909,18 +965,11 @@ export default function BreakingPage() {
                   className="flex h-28 w-28 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100"
                   title="원문 기사로 이동합니다."
                 >
-                  {article.imageUrl ? (
-                    <img
-                      src={article.imageUrl}
-                      alt={article.title}
-                      className="h-full w-full object-cover"
-                      onError={(event) => {
-                        event.currentTarget.style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <div className="text-4xl">{getSourceEmoji(article.source)}</div>
-                  )}
+                  <BreakingThumb
+                    imageUrl={article.imageUrl}
+                    title={article.title}
+                    fallback={getSourceEmoji(article.source)}
+                  />
                 </a>
 
                 <div className="min-w-0 flex-1">

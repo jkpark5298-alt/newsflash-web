@@ -56,6 +56,7 @@ export interface Article {
   description: string;
   source: string;
   imageUrl?: string;
+  category?: "국내" | "국제";
 }
 
 export interface Cartoon {

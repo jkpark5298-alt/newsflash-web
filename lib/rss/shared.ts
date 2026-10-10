@@ -38,6 +38,7 @@ type CacheEntry<T> = {
 };
 
 const ttlCache = new Map<string, CacheEntry<unknown>>();
+const inflightCache = new Map<string, Promise<unknown>>();
 
 export function createRssParser(): Parser<object, RSSItem> {
   return new Parser<object, RSSItem>({
@@ -205,7 +206,28 @@ export async function withTtlCache<T>(
     return cached.value;
   }
 
-  const value = await loader();
-  ttlCache.set(key, { value, expiresAt: now + ttlMs });
-  return value;
+  const pending = inflightCache.get(key) as Promise<T> | undefined;
+
+  if (pending) {
+    return pending;
+  }
+
+  const promise = (async () => {
+    try {
+      const value = await loader();
+      ttlCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+      return value;
+    } catch (error) {
+      if (cached) {
+        return cached.value;
+      }
+
+      throw error;
+    } finally {
+      inflightCache.delete(key);
+    }
+  })();
+
+  inflightCache.set(key, promise);
+  return promise;
 }

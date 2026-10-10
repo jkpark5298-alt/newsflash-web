@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
 import {
+  canonicalizeArticleLink,
+  koreanWallTimeToIso,
+  resolveClockTimePubDate,
+  selectBreakingLists,
+  type FeedPriority,
+} from '@/lib/breaking-select';
+import {
   cleanDescription,
   createRssParser,
   extractImageUrl,
@@ -19,6 +26,7 @@ interface Article {
   source: string;
   category: NewsCategory;
   imageUrl?: string;
+  feedPriority?: FeedPriority;
 }
 
 interface RSSFeedConfig {
@@ -26,6 +34,7 @@ interface RSSFeedConfig {
   source: string;
   category: NewsCategory;
   limit: number;
+  feedPriority: FeedPriority;
 }
 
 const BREAKING_MAX_AGE_HOURS = 12;
@@ -38,76 +47,67 @@ const parser = createRssParser();
 
 const RSS_FEEDS: RSSFeedConfig[] = [
   {
-    url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER',
-    source: 'SBS',
+    url: 'https://www.newsis.com/RSS/sokbo.xml',
+    source: '뉴시스',
     category: '국내',
-    limit: 12
+    limit: 15,
+    feedPriority: 'breaking'
   },
   {
-    url: 'https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER',
-    source: 'SBS 주요뉴스',
+    url: 'https://www.yna.co.kr/rss/news.xml',
+    source: '연합뉴스',
     category: '국내',
-    limit: 12
-  },
-  {
-    url: 'https://imnews.imbc.com/rss/google_news/narrativeNews.rss',
-    source: 'MBC',
-    category: '국내',
-    limit: 15
-  },
-  {
-    url: 'https://imnews.imbc.com/rss/news/news_00.xml',
-    source: 'MBC',
-    category: '국내',
-    limit: 15
+    limit: 12,
+    feedPriority: 'headline'
   },
   {
     url: 'https://www.yonhapnewstv.co.kr/category/news/headline/feed/',
     source: '연합뉴스TV',
     category: '국내',
-    limit: 12
+    limit: 12,
+    feedPriority: 'headline'
   },
   {
-    url: 'https://www.newsis.com/RSS/sokbo.xml',
-    source: '뉴시스',
+    url: 'https://news.sbs.co.kr/news/headlineRssFeed.do?plink=RSSREADER',
+    source: 'SBS 주요뉴스',
     category: '국내',
-    limit: 15
+    limit: 12,
+    feedPriority: 'headline'
+  },
+  {
+    url: 'https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER',
+    source: 'SBS',
+    category: '국내',
+    limit: 8,
+    feedPriority: 'general'
+  },
+  {
+    url: 'https://imnews.imbc.com/rss/news/news_00.xml',
+    source: 'MBC',
+    category: '국내',
+    limit: 10,
+    feedPriority: 'general'
+  },
+  {
+    url: 'https://imnews.imbc.com/rss/google_news/narrativeNews.rss',
+    source: 'MBC',
+    category: '국내',
+    limit: 8,
+    feedPriority: 'general'
   },
   {
     url: 'https://www.mk.co.kr/rss/30000001/',
     source: '매일경제',
     category: '국내',
-    limit: 10
+    limit: 8,
+    feedPriority: 'general'
   },
   {
     url: 'https://www.khan.co.kr/rss/rssdata/total_news.xml',
     source: '경향신문',
     category: '국내',
-    limit: 10
-  },
-  {
-    url: 'https://feeds.bbci.co.uk/news/world/rss.xml',
-    source: 'BBC News',
-    category: '국제',
-    limit: 10
-  },
-  {
-    url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-    source: 'New York Times',
-    category: '국제',
-    limit: 10
-  },
-  {
-    url: 'https://www.aljazeera.com/xml/rss/all.xml',
-    source: 'Al Jazeera',
-    category: '국제',
-    limit: 10
-  },
-  {
-    url: 'https://www.theguardian.com/world/rss',
-    source: 'The Guardian',
-    category: '국제',
-    limit: 10
+    limit: 8,
+    feedPriority: 'general'
   }
 ];
 
@@ -165,45 +165,6 @@ function getItemPubDate(item: RSSItem): string | undefined {
   return item.pubDate || item.isoDate;
 }
 
-function normalizeTitle(title: string): string {
-  return title
-    .replace(/\s+/g, ' ')
-    .replace(/[“”"']/g, '')
-    .replace(/\[[^\]]+\]/g, '')
-    .trim()
-    .toLowerCase();
-}
-
-function removeDuplicateArticles(articles: Article[]): Article[] {
-  const seenTitles = new Set<string>();
-  const seenLinks = new Set<string>();
-
-  return articles.filter((article) => {
-    const normalizedTitle = normalizeTitle(article.title);
-    const normalizedLink = article.link.trim();
-
-    if (!normalizedTitle) {
-      return false;
-    }
-
-    if (normalizedLink && seenLinks.has(normalizedLink)) {
-      return false;
-    }
-
-    if (seenTitles.has(normalizedTitle)) {
-      return false;
-    }
-
-    seenTitles.add(normalizedTitle);
-
-    if (normalizedLink) {
-      seenLinks.add(normalizedLink);
-    }
-
-    return true;
-  });
-}
-
 function normalizeDateValue(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
@@ -236,17 +197,26 @@ function isRecentEnough(pubDate: string, maxAgeHours: number): boolean {
   return diffMs <= maxAgeMs;
 }
 
+function hasArticleLink(link: string | undefined): link is string {
+  return Boolean(link && link !== '#' && /^https?:\/\//i.test(link));
+}
+
 async function fetchRSSFeed({
   url,
   source,
   category,
-  limit
+  limit,
+  feedPriority
 }: RSSFeedConfig): Promise<Article[]> {
   try {
     const feed = await parser.parseURL(url);
     const articles: Article[] = [];
 
     for (const item of feed.items.slice(0, limit)) {
+      if (!hasArticleLink(item.link)) {
+        continue;
+      }
+
       const pubDate = normalizeDateValue(getItemPubDate(item));
 
       if (!pubDate) {
@@ -259,12 +229,13 @@ async function fetchRSSFeed({
 
       const article: Article = {
         title: cleanTitle(item.title || '제목 없음'),
-        link: item.link || '#',
+        link: canonicalizeArticleLink(item.link),
         pubDate,
         description: cleanDescription(getItemDescription(item)),
         source,
         category,
-        imageUrl: extractImageUrl(item)
+        imageUrl: extractImageUrl(item),
+        feedPriority
       };
 
       articles.push(article);
@@ -286,21 +257,14 @@ function parseYtnDateFromLink(link: string): string | undefined {
 
   const rawDate = match[1];
 
-  const year = rawDate.slice(0, 4);
-  const month = rawDate.slice(4, 6);
-  const day = rawDate.slice(6, 8);
-  const hour = rawDate.slice(8, 10);
-  const minute = rawDate.slice(10, 12);
-  const second = rawDate.slice(12, 14);
-
-  const isoWithKoreanTimezone = `${year}-${month}-${day}T${hour}:${minute}:${second}+09:00`;
-  const parsed = new Date(isoWithKoreanTimezone);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return undefined;
-  }
-
-  return parsed.toISOString();
+  return koreanWallTimeToIso(
+    Number(rawDate.slice(0, 4)),
+    Number(rawDate.slice(4, 6)),
+    Number(rawDate.slice(6, 8)),
+    Number(rawDate.slice(8, 10)),
+    Number(rawDate.slice(10, 12)),
+    Number(rawDate.slice(12, 14)),
+  );
 }
 
 function extractYtnDateFromHtml(fragment: string): string | undefined {
@@ -310,37 +274,28 @@ function extractYtnDateFromHtml(fragment: string): string | undefined {
 
   if (dateTimeMatch) {
     const [, year, month, day, hour, minute] = dateTimeMatch;
-    const isoWithKoreanTimezone = `${year}-${month.padStart(2, '0')}-${day.padStart(
-      2,
-      '0'
-    )}T${hour.padStart(2, '0')}:${minute}:00+09:00`;
-    const parsed = new Date(isoWithKoreanTimezone);
-
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString();
-    }
+    return koreanWallTimeToIso(
+      Number(year),
+      Number(month),
+      Number(day),
+      Number(hour),
+      Number(minute),
+      0,
+    );
   }
 
   const timeOnlyMatch = fragment.match(/(\d{1,2}):(\d{2})/);
 
   if (timeOnlyMatch) {
-    const now = new Date();
     const [, hour, minute] = timeOnlyMatch;
-    const koreanNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-
-    koreanNow.setHours(Number(hour));
-    koreanNow.setMinutes(Number(minute));
-    koreanNow.setSeconds(0);
-    koreanNow.setMilliseconds(0);
-
-    return new Date(koreanNow.getTime() - 9 * 60 * 60 * 1000).toISOString();
+    return resolveClockTimePubDate(Number(hour), Number(minute));
   }
 
   return undefined;
 }
 
-function extractYtnPubDate(fragment: string, link: string): string {
-  return parseYtnDateFromLink(link) || extractYtnDateFromHtml(fragment) || new Date().toISOString();
+function extractYtnPubDate(fragment: string, link: string): string | undefined {
+  return parseYtnDateFromLink(link) || extractYtnDateFromHtml(fragment);
 }
 
 function extractYtnImageFromFragment(fragment: string): string | undefined {
@@ -454,9 +409,9 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
       continue;
     }
 
-    const link = makeAbsoluteUrl('https://www.ytn.co.kr', href);
+    const link = canonicalizeArticleLink(makeAbsoluteUrl('https://www.ytn.co.kr', href));
 
-    if (seenLinks.has(link)) {
+    if (!hasArticleLink(link) || seenLinks.has(link)) {
       continue;
     }
 
@@ -468,7 +423,7 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
 
     const pubDate = extractYtnPubDate(fragment, link);
 
-    if (!isRecentEnough(pubDate, YTN_MAX_AGE_HOURS)) {
+    if (!pubDate || !isRecentEnough(pubDate, YTN_MAX_AGE_HOURS)) {
       continue;
     }
 
@@ -478,10 +433,11 @@ function parseYtnArticles(html: string, source: string, limit: number): Article[
       title,
       link,
       pubDate,
-      description: 'YTN 최신뉴스 목록에서 수집한 기사입니다.',
+      description: '내용 없음',
       source,
       category: '국내',
-      imageUrl: extractYtnImageFromFragment(fragment)
+      imageUrl: extractYtnImageFromFragment(fragment),
+      feedPriority: 'headline'
     };
 
     articles.push(article);
@@ -500,33 +456,9 @@ async function fetchYtnRecentNews(): Promise<Article[]> {
   }
 }
 
-function sortByLatestFirst(articles: Article[]): Article[] {
-  return articles.sort((a, b) => {
-    const dateA = new Date(a.pubDate).getTime();
-    const dateB = new Date(b.pubDate).getTime();
-
-    return dateB - dateA;
-  });
-}
-
-function createSourceStats(articles: Article[]): Record<string, number> {
-  return articles.reduce<Record<string, number>>((acc, article) => {
-    acc[article.source] = (acc[article.source] || 0) + 1;
-    return acc;
-  }, {});
-}
-
-function createCategoryStats(articles: Article[]): Record<NewsCategory, number> {
-  return articles.reduce<Record<NewsCategory, number>>(
-    (acc, article) => {
-      acc[article.category] += 1;
-      return acc;
-    },
-    {
-      국내: 0,
-      국제: 0
-    }
-  );
+function toPublicArticle(article: Article) {
+  const { feedPriority: _feedPriority, ...publicArticle } = article;
+  return publicArticle;
 }
 
 async function aggregateBreakingNews() {
@@ -554,20 +486,46 @@ async function aggregateBreakingNews() {
     })
     .filter(Boolean);
 
-  const uniqueArticles = removeDuplicateArticles(allArticles);
-  const articles = sortByLatestFirst(uniqueArticles);
+  if (allArticles.length === 0) {
+    throw new Error('속보 수집 결과가 비어 있습니다.');
+  }
+
+  const selected = selectBreakingLists(allArticles);
+  const articles = selected.articles.map(toPublicArticle);
+  const featured = selected.featured.map(toPublicArticle);
   const sourceStats = createSourceStats(articles);
   const categoryStats = createCategoryStats(articles);
 
   return {
     articles,
+    featured,
     lastUpdated: new Date().toISOString(),
     totalCount: articles.length,
+    featuredCount: featured.length,
     sourceStats,
     categoryStats,
     sources: Object.keys(sourceStats),
     errors: errors.length > 0 ? errors : undefined
   };
+}
+function createSourceStats(articles: Article[]): Record<string, number> {
+  return articles.reduce<Record<string, number>>((acc, article) => {
+    acc[article.source] = (acc[article.source] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function createCategoryStats(articles: Article[]): Record<NewsCategory, number> {
+  return articles.reduce<Record<NewsCategory, number>>(
+    (acc, article) => {
+      acc[article.category] += 1;
+      return acc;
+    },
+    {
+      국내: 0,
+      국제: 0
+    }
+  );
 }
 
 export async function GET() {

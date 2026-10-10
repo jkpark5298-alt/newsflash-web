@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import { neon } from "@neondatabase/serverless";
 import { get, list, put } from "@vercel/blob";
+import { isKeywordMatch } from "@/lib/breaking-select";
 
 export type PushSubscriptionRecord = {
   endpoint: string;
@@ -498,19 +499,7 @@ export function isWithinScheduledWindow(minutes: number, windowSize = 10) {
 }
 
 export function matchesKeyword(text: string, keyword: string): boolean {
-  const normalized = text.toLowerCase();
-  const trimmed = keyword.trim().toLowerCase();
-  if (!trimmed) return false;
-
-  if (trimmed.includes("+")) {
-    const parts = trimmed
-      .split("+")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    return parts.length > 0 && parts.every((part) => normalized.includes(part));
-  }
-
-  return normalized.includes(trimmed);
+  return isKeywordMatch(text, keyword);
 }
 
 export function isCronAuthorized(request: Request): boolean {
