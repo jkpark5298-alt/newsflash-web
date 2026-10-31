@@ -40,6 +40,7 @@ type NotificationPayload = {
   focus?: "news" | "stock" | "keyword";
   recordId?: string;
   seenTitle?: string;
+  source?: string;
   articles?: Array<{ title?: string; link?: string; description?: string; source?: string }>;
 };
 
@@ -149,6 +150,7 @@ function buildKeywordNotifications(
     title?: string;
     description?: string;
     link?: string;
+    source?: string;
   }>,
 ): NotificationPayload[] {
   if (!subscription.alertEnabled || !subscription.alertKeywords?.length) {
@@ -179,6 +181,7 @@ function buildKeywordNotifications(
       focus: "keyword",
       recordId: `keyword:${link || title}`,
       seenTitle: title,
+      source: article.source,
     });
   }
 
@@ -417,6 +420,7 @@ export async function GET(request: Request) {
               view: alert.view || "alerts",
               focus: alert.focus,
               recordId: alert.recordId,
+              source: alert.source,
               articles: alert.articles,
             }),
           );

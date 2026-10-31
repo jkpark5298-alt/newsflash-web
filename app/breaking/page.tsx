@@ -250,6 +250,7 @@ export default function BreakingPage() {
             title: displayTitle,
             body: article.description || '자세한 내용은 클릭하여 확인하세요.',
             url: article.link,
+            source: article.source,
             receivedAt: new Date().toISOString(),
           }).catch((error) => console.error('받은 알림 저장 실패:', error));
         } catch (e) {

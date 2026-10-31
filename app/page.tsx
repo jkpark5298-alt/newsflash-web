@@ -27,9 +27,12 @@ import {
 } from "./lib/home-constants";
 import { previewEconomyNews, selectEconomyNews, ECONOMY_TOPICS } from "@/lib/economy-select";
 import {
+  clearReceivedAlerts,
   deleteReceivedAlert,
+  groupReceivedAlerts,
   loadReceivedAlerts,
   saveReceivedAlert,
+  titleWithSource,
   type ReceivedAlert,
 } from "./lib/received-alerts";
 import {
@@ -931,6 +934,7 @@ export default function Home() {
             title: displayTitle,
             body: article.description || "자세한 내용은 클릭하여 확인하세요.",
             url: article.link,
+            source: article.source,
             receivedAt: new Date().toISOString(),
           });
         } catch (e) {
@@ -1538,6 +1542,7 @@ export default function Home() {
                 articles: top5.map((art) => ({
                   title: art.title,
                   link: art.link,
+                  source: art.source,
                 })),
               });
             } catch (e) {
@@ -3210,63 +3215,101 @@ export default function Home() {
                     </p>
 
                     <div id="received-alerts" className="mt-8 border-t border-gray-100 pt-6 scroll-mt-32">
-                      <div className="mb-4">
-                        <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
-                          <span>🔔</span>
-                          <span>받은 알림</span>
-                        </h3>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          키워드 알림과 정기 알림이 도착하면 이 기기에 최근 30건을 남깁니다. 앱을 닫은 뒤 받은 푸시도 다시 열면 여기에 있습니다.
-                        </p>
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold text-gray-800 flex items-center gap-1.5">
+                            <span>🔔</span>
+                            <span>받은 알림</span>
+                          </h3>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            키워드 알림과 정기 알림이 도착하면 이 기기에 최근 30건을 남깁니다. 종류별로 묶어 최신 순으로 보여줍니다.
+                          </p>
+                        </div>
+                        {receivedAlerts.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!window.confirm(`받은 알림 ${receivedAlerts.length}건을 모두 삭제할까요?`)) return;
+                              clearReceivedAlerts()
+                                .then(setReceivedAlerts)
+                                .catch((error) => console.error("받은 알림 전체 삭제 실패:", error));
+                            }}
+                            className="shrink-0 text-red-500 hover:text-red-700 font-bold text-xs whitespace-nowrap px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50"
+                          >
+                            전체 삭제
+                          </button>
+                        ) : null}
                       </div>
                       {receivedAlerts.length > 0 ? (
-                        <div className="space-y-3 mb-6">
-                          {receivedAlerts.map((alert) => (
-                            <div key={alert.id} className="rounded-2xl border border-gray-200 bg-white p-4">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-[11px] font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
-                                      {alert.kind === "keyword"
-                                        ? "키워드"
-                                        : alert.kind === "news"
-                                          ? "정기 뉴스"
-                                          : alert.kind === "stock"
-                                            ? "정기 증시"
-                                            : "알림"}
-                                    </span>
-                                    <span className="text-[11px] text-gray-400">
-                                      {new Date(alert.receivedAt).toLocaleString("ko-KR")}
-                                    </span>
+                        <div className="space-y-6 mb-6">
+                          {groupReceivedAlerts(receivedAlerts).map((group) => (
+                            <section key={group.kind}>
+                              <h4 className="mb-2 text-xs font-bold text-gray-500">
+                                {group.label} <span className="text-gray-400">({group.items.length})</span>
+                              </h4>
+                              <div className="space-y-3">
+                                {group.items.map((alert) => (
+                                  <div key={alert.id} className="rounded-2xl border border-gray-200 bg-white p-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <span className="block text-[11px] text-gray-400 mb-1">
+                                          {new Date(alert.receivedAt).toLocaleString("ko-KR")}
+                                        </span>
+                                        <h5 className="font-bold text-gray-800 text-sm">
+                                          {titleWithSource(alert.title, alert.source)}
+                                        </h5>
+                                        {alert.articles && alert.articles.length > 0 ? (
+                                          <ol className="mt-2 space-y-1 text-xs text-gray-600 leading-relaxed">
+                                            {alert.articles.map((article, index) => (
+                                              <li key={`${alert.id}-${index}`}>
+                                                {index + 1}.{" "}
+                                                {/^https?:\/\//i.test(article.link) ? (
+                                                  <a
+                                                    href={article.link}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="hover:underline hover:text-blue-600"
+                                                  >
+                                                    {titleWithSource(article.title, article.source)}
+                                                  </a>
+                                                ) : (
+                                                  titleWithSource(article.title, article.source)
+                                                )}
+                                              </li>
+                                            ))}
+                                          </ol>
+                                        ) : (
+                                          <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-gray-600 leading-relaxed line-clamp-4">
+                                            {alert.body}
+                                          </pre>
+                                        )}
+                                        {alert.url && /^https?:\/\//i.test(alert.url) ? (
+                                          <a
+                                            href={alert.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="mt-2 inline-block text-xs font-semibold text-blue-600 hover:underline"
+                                          >
+                                            기사 보기
+                                          </a>
+                                        ) : null}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          deleteReceivedAlert(alert.id)
+                                            .then(setReceivedAlerts)
+                                            .catch((error) => console.error("받은 알림 삭제 실패:", error));
+                                        }}
+                                        className="text-red-500 hover:text-red-700 font-bold text-xs whitespace-nowrap px-2 py-1 rounded hover:bg-red-50"
+                                      >
+                                        삭제
+                                      </button>
+                                    </div>
                                   </div>
-                                  <h4 className="font-bold text-gray-800 text-sm">{alert.title}</h4>
-                                  <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-gray-600 leading-relaxed line-clamp-4">
-                                    {alert.body}
-                                  </pre>
-                                  {alert.url && /^https?:\/\//i.test(alert.url) ? (
-                                    <a
-                                      href={alert.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="mt-2 inline-block text-xs font-semibold text-blue-600 hover:underline"
-                                    >
-                                      기사 보기
-                                    </a>
-                                  ) : null}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    deleteReceivedAlert(alert.id)
-                                      .then(setReceivedAlerts)
-                                      .catch((error) => console.error("받은 알림 삭제 실패:", error));
-                                  }}
-                                  className="text-red-500 hover:text-red-700 font-bold text-xs whitespace-nowrap px-2 py-1 rounded hover:bg-red-50"
-                                >
-                                  삭제
-                                </button>
+                                ))}
                               </div>
-                            </div>
+                            </section>
                           ))}
                         </div>
                       ) : (

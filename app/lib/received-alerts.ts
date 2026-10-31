@@ -10,9 +10,38 @@ export type ReceivedAlert = {
   title: string;
   body: string;
   url?: string;
+  /** 기사 출처(언론사). 키워드 알림처럼 기사 1건짜리 알림에 쓴다. */
+  source?: string;
   receivedAt: string;
-  articles?: Array<{ title: string; link: string }>;
+  articles?: Array<{ title: string; link: string; source?: string }>;
 };
+
+export const RECEIVED_ALERT_GROUPS: ReadonlyArray<{
+  kind: ReceivedAlertKind;
+  label: string;
+}> = [
+  { kind: "keyword", label: "키워드 알림" },
+  { kind: "news", label: "정기 뉴스" },
+  { kind: "stock", label: "정기 증시" },
+  { kind: "other", label: "기타 알림" },
+];
+
+/** 알림 종류별로 묶고, 각 묶음 안에서는 최신순으로 보여준다. */
+export function groupReceivedAlerts(alerts: ReceivedAlert[]) {
+  return RECEIVED_ALERT_GROUPS.map((group) => ({
+    ...group,
+    items: alerts
+      .filter((alert) => alert.kind === group.kind)
+      .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt)),
+  })).filter((group) => group.items.length > 0);
+}
+
+/** "제목 (출처)" 형태로 만든다. 이미 출처가 붙어 있으면 그대로 둔다. */
+export function titleWithSource(title: string, source?: string) {
+  const name = source?.trim();
+  if (!name || title.includes(`(${name})`)) return title;
+  return `${title} (${name})`;
+}
 
 function openReceivedAlertsDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -87,6 +116,23 @@ export async function saveReceivedAlert(alert: ReceivedAlert) {
     }
 
     return sorted.slice(0, RECEIVED_ALERTS_LIMIT);
+  } finally {
+    db.close();
+  }
+}
+
+export async function clearReceivedAlerts() {
+  const db = await openReceivedAlertsDb();
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(RECEIVED_ALERTS_STORE, "readwrite");
+      tx.objectStore(RECEIVED_ALERTS_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    return [] as ReceivedAlert[];
   } finally {
     db.close();
   }

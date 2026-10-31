@@ -48,11 +48,13 @@ function rememberPushAlert(data) {
     title,
     body: data.body || "",
     url: data.url,
+    source: data.source || undefined,
     receivedAt,
     articles: Array.isArray(data.articles)
       ? data.articles.slice(0, 5).map((article) => ({
           title: article.title || "제목 없음",
           link: article.link || "",
+          source: article.source || undefined,
         }))
       : undefined,
   };
