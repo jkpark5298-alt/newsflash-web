@@ -1,6 +1,11 @@
 import fs from "fs";
 import path from "path";
 import { neon } from "@neondatabase/serverless";
+import {
+  isRedisConfigured,
+  readRedisJson,
+  writeRedisJson,
+} from "./redis-rest";
 
 export type NewsClipIndexEntry = {
   id: string;
@@ -84,22 +89,45 @@ function writeFileItems(items: NewsClipIndexEntry[]) {
   fs.writeFileSync(FILE_PATH, JSON.stringify(items.slice(0, MAX_ITEMS)));
 }
 
+const REDIS_KEY = "news-clip-index";
+
+async function listPostgresItems(): Promise<NewsClipIndexEntry[]> {
+  await ensureTable();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, title, created_at, deleted
+    FROM news_clip_index
+    ORDER BY created_at DESC
+    LIMIT 300
+  `;
+  return rows.map((row) => ({
+    id: String(row.id),
+    title: String(row.title),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    deleted: Boolean(row.deleted),
+  }));
+}
+
+async function listRedisItems(): Promise<NewsClipIndexEntry[]> {
+  const stored = await readRedisJson<unknown>(REDIS_KEY, [], async () => {
+    // Redis 이전용: 옛 Neon 테이블이 있으면 한 번만 복사한다.
+    if (!databaseUrl()) return undefined;
+    const rows = await listPostgresItems();
+    return rows.length > 0 ? rows : undefined;
+  });
+  if (!Array.isArray(stored)) return [];
+  return stored
+    .map((item) => sanitizeNewsClipIndexEntry(item))
+    .filter((item): item is NewsClipIndexEntry => item !== null)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 export async function listNewsClipIndex(): Promise<NewsClipIndexEntry[]> {
+  if (isRedisConfigured()) {
+    return (await listRedisItems()).slice(0, MAX_ITEMS);
+  }
   if (databaseUrl()) {
-    await ensureTable();
-    const sql = getSql();
-    const rows = await sql`
-      SELECT id, title, created_at, deleted
-      FROM news_clip_index
-      ORDER BY created_at DESC
-      LIMIT 300
-    `;
-    return rows.map((row) => ({
-      id: String(row.id),
-      title: String(row.title),
-      createdAt: new Date(String(row.created_at)).toISOString(),
-      deleted: Boolean(row.deleted),
-    }));
+    return listPostgresItems();
   }
   return readFileItems().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -107,6 +135,17 @@ export async function listNewsClipIndex(): Promise<NewsClipIndexEntry[]> {
 export async function upsertNewsClipIndex(entries: NewsClipIndexEntry[]): Promise<void> {
   const items = entries.slice(0, 50);
   if (items.length === 0) return;
+  if (isRedisConfigured()) {
+    const byId = new Map((await listRedisItems()).map((item) => [item.id, item]));
+    for (const item of items) byId.set(item.id, item);
+    await writeRedisJson(
+      REDIS_KEY,
+      Array.from(byId.values())
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, MAX_ITEMS),
+    );
+    return;
+  }
   if (databaseUrl()) {
     await ensureTable();
     const sql = getSql();

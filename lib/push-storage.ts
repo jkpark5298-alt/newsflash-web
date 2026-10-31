@@ -5,6 +5,11 @@ import path from "path";
 import { neon } from "@neondatabase/serverless";
 import { get, list, put } from "@vercel/blob";
 import { isKeywordMatch } from "@/lib/breaking-select";
+import {
+  isRedisConfigured,
+  readRedisJson,
+  writeRedisJson,
+} from "@/lib/redis-rest";
 
 export type PushSubscriptionRecord = {
   endpoint: string;
@@ -93,8 +98,10 @@ function getBlobToken(): string | undefined {
 }
 
 function useBlobStorage() {
-  // Blob Hobby 한도(정지) 기간에는 Postgres를 우선 사용한다.
-  return !usePostgresStorage() && Boolean(getBlobToken());
+  // 우선순위: Upstash Redis → Postgres → Blob → 로컬 파일
+  return (
+    !isRedisConfigured() && !usePostgresStorage() && Boolean(getBlobToken())
+  );
 }
 
 function isVercelRuntime() {
@@ -144,6 +151,17 @@ async function readPostgresJson<T>(key: string, fallback: T): Promise<T> {
   } catch {
     return fallback;
   }
+}
+
+/** Redis 이전용: 옛 Postgres 값을 읽는다. 행이 없으면 undefined, 연결 오류는 그대로 던진다. */
+async function readPostgresLegacy<T>(key: string): Promise<T | undefined> {
+  if (!usePostgresStorage()) return undefined;
+  await ensurePostgresSchema();
+  const sql = getSql();
+  const rows = await sql`SELECT value FROM push_kv WHERE key = ${key} LIMIT 1`;
+  const raw = rows[0]?.value;
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  return JSON.parse(raw) as T;
 }
 
 async function writePostgresJson(key: string, data: unknown) {
@@ -351,6 +369,9 @@ export async function readAppJson<T>(
   blobPath: string,
   fallback: T,
 ): Promise<T> {
+  if (isRedisConfigured()) {
+    return readRedisJson<T>(key, fallback, () => readPostgresLegacy<T>(key));
+  }
   if (usePostgresStorage()) {
     return readPostgresJson<T>(key, fallback);
   }
@@ -369,6 +390,10 @@ export async function writeAppJson(
   blobPath: string,
   data: unknown,
 ) {
+  if (isRedisConfigured()) {
+    await writeRedisJson(key, data);
+    return;
+  }
   if (usePostgresStorage()) {
     await writePostgresJson(key, data);
     return;
@@ -379,13 +404,20 @@ export async function writeAppJson(
   }
   if (isVercelRuntime()) {
     throw new Error(
-      "저장소가 없습니다. Neon(DATABASE_URL) 또는 Blob을 연결하세요.",
+      "저장소가 없습니다. Upstash Redis, Neon(DATABASE_URL) 또는 Blob을 연결하세요.",
     );
   }
   writeFileJson(path.join(paths.dir, fileName), data);
 }
 
 export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
+  if (isRedisConfigured()) {
+    return readRedisJson<PushSubscriptionRecord[]>(
+      PG_SUBSCRIPTIONS_KEY,
+      [],
+      () => readPostgresLegacy<PushSubscriptionRecord[]>(PG_SUBSCRIPTIONS_KEY),
+    );
+  }
   if (usePostgresStorage()) {
     return readPostgresJson<PushSubscriptionRecord[]>(PG_SUBSCRIPTIONS_KEY, []);
   }
@@ -404,6 +436,10 @@ export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
 export async function saveSubscriptions(
   subscriptions: PushSubscriptionRecord[],
 ) {
+  if (isRedisConfigured()) {
+    await writeRedisJson(PG_SUBSCRIPTIONS_KEY, subscriptions);
+    return;
+  }
   if (usePostgresStorage()) {
     await writePostgresJson(PG_SUBSCRIPTIONS_KEY, subscriptions);
     return;
@@ -485,6 +521,13 @@ export async function removeSubscription(
 }
 
 export async function getSentSlots(): Promise<Record<string, string>> {
+  if (isRedisConfigured()) {
+    return readRedisJson<Record<string, string>>(
+      PG_SENT_SLOTS_KEY,
+      {},
+      () => readPostgresLegacy<Record<string, string>>(PG_SENT_SLOTS_KEY),
+    );
+  }
   if (usePostgresStorage()) {
     return readPostgresJson<Record<string, string>>(PG_SENT_SLOTS_KEY, {});
   }
@@ -503,6 +546,11 @@ export async function markSentSlot(slotKey: string) {
     if (new Date(value).getTime() < cutoff) {
       delete sentSlots[key];
     }
+  }
+
+  if (isRedisConfigured()) {
+    await writeRedisJson(PG_SENT_SLOTS_KEY, sentSlots);
+    return;
   }
 
   if (usePostgresStorage()) {
@@ -581,17 +629,24 @@ export function isCronAuthorized(request: Request): boolean {
 }
 
 export function getPushStorageInfo() {
+  const redisConfigured = isRedisConfigured();
   const postgresConfigured = usePostgresStorage();
   const blobTokenPresent = Boolean(getBlobToken());
   const blobStoreIdPresent = Boolean(process.env.BLOB_STORE_ID);
 
   return {
-    storage: postgresConfigured
-      ? "neon-postgres"
-      : blobTokenPresent || (isVercelRuntime() && blobStoreIdPresent)
-        ? "vercel-blob"
-        : "local-file",
+    storage: redisConfigured
+      ? "upstash-redis"
+      : postgresConfigured
+        ? "neon-postgres"
+        : blobTokenPresent || (isVercelRuntime() && blobStoreIdPresent)
+          ? "vercel-blob"
+          : "local-file",
+    redisConfigured,
     postgresConfigured,
+    /** 서버리스에서 데이터가 유지되는 저장소가 하나라도 연결돼 있는지 */
+    persistentConfigured:
+      redisConfigured || postgresConfigured || blobTokenPresent,
     blobConfigured: blobTokenPresent,
     blobStoreIdPresent,
     isVercel: isVercelRuntime(),

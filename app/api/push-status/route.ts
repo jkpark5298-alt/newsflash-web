@@ -47,7 +47,7 @@ export async function GET(request: Request) {
     recentSentSlots: Object.entries(sentSlots).slice(-5),
     pushReady:
       subscriberCount >= 1 &&
-      (storage.postgresConfigured || storage.blobConfigured),
+      storage.persistentConfigured,
     hint:
       subscriberCount === 0
         ? "등록된 푸시 구독자가 없습니다. iPhone 홈 화면 PWA에서 '푸시 연결하기'를 실행하세요."

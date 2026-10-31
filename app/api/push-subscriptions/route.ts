@@ -11,8 +11,19 @@ import {
 import { normalizeScheduledNewsHours } from "@/lib/alert-schedule";
 
 export async function GET() {
-  const subs = await getSubscriptions();
   const storage = getPushStorageInfo();
+  let subs: Awaited<ReturnType<typeof getSubscriptions>> = [];
+  let lastCronAt: string | null = null;
+  let storageError: string | undefined;
+
+  // 저장소(DB)가 막혀도 VAPID 키는 내려주고, 원인은 응답에 남긴다.
+  try {
+    subs = await getSubscriptions();
+    lastCronAt = await getCronCheckedAt();
+  } catch (error) {
+    storageError = error instanceof Error ? error.message : String(error);
+    console.error("푸시 저장소 조회 실패:", error);
+  }
 
   let vapidPublicKey = "";
   try {
@@ -27,10 +38,12 @@ export async function GET() {
       vapidPublicKey,
       storage,
       cronSecretConfigured: Boolean(process.env.CRON_SECRET),
-      lastCronAt: await getCronCheckedAt(),
+      lastCronAt,
+      storageError,
       pushReady:
+        !storageError &&
         subs.length >= 1 &&
-        (storage.postgresConfigured || storage.blobConfigured),
+        storage.persistentConfigured,
       subscriberSettings: subs.map((sub) => ({
         scheduledAlertEnabled: sub.scheduledAlertEnabled !== false,
         scheduledNewsHours: normalizeScheduledNewsHours(sub.scheduledNewsHours),
@@ -103,7 +116,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: suspended
-          ? "Vercel Blob 스토어가 정지되어 구독을 저장할 수 없습니다. Neon(DATABASE_URL) 연결 여부를 확인하세요."
+          ? "Vercel Blob 스토어가 정지되어 구독을 저장할 수 없습니다. Upstash Redis 연결 여부를 확인하세요."
           : "서버 처리 중 오류가 발생했습니다.",
         detail: message,
       },

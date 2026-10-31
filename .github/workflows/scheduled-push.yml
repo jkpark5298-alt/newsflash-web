@@ -4,9 +4,10 @@ name: Scheduled Push Cron
 # /api/send-scheduled-push 를 주기적으로 호출합니다.
 on:
   schedule:
-    # 5분 호출은 cron-job.org가 담당한다.
-    # GitHub 예비 호출은 정각을 피한다. 정각은 예약이 빠지기 쉽다.
-    - cron: "7,22,37,52 * * * *"
+    # 주 호출은 cron-job.org(KST 06:01~23:41, 20분 간격)가 담당한다.
+    # GitHub 예비 호출은 DB가 자주 깨지 않도록 시간당 1회만, 정각을 피해 호출한다.
+    # KST 06~23시 = UTC 21~23시, 0~14시
+    - cron: "11 0-14,21-23 * * *"
   workflow_dispatch:
 
 jobs:

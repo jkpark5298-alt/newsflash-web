@@ -642,7 +642,7 @@ export default function Home() {
 
       if ((latestCount ?? 0) < 1) {
         setPushConnectionMessage(
-          `연결 실패: 서버 구독 count=${countLabel}. Blob 저장/조회를 확인해 주세요.`,
+          `연결 실패: 서버 구독 count=${countLabel}. 서버 저장소(Upstash Redis) 연결을 확인해 주세요.`,
         );
         alert("서버 구독이 0입니다. 홈 화면 PWA에서 다시 연결해 주세요.");
         return;

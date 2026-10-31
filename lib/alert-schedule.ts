@@ -66,7 +66,7 @@ export function slotsForScheduledPush(now: Date): ScheduledPushSlot[] {
 export function isCronCheckStale(
   checkedAt: string | null | undefined,
   now = new Date(),
-  staleAfterMs = 10 * 60 * 1000,
+  staleAfterMs = 30 * 60 * 1000,
 ): boolean {
   if (!checkedAt) return true;
   const checkedMs = new Date(checkedAt).getTime();

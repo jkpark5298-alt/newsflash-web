@@ -43,6 +43,9 @@ type NotificationPayload = {
   articles?: Array<{ title?: string; link?: string; description?: string; source?: string }>;
 };
 
+/** 이 시각(KST) 전에는 푸시 크론이 아무 일도 하지 않는다. */
+const QUIET_UNTIL_HOUR = 6;
+
 const ALERT_BOARD_NEWS_URL = "/?view=alerts&focus=news#recent-scheduled-alerts";
 const ALERT_BOARD_STOCK_URL = "/?view=alerts&focus=stock#recent-scheduled-alerts";
 const ALERT_BOARD_URL = "/?view=alerts#recent-scheduled-alerts";
@@ -209,6 +212,15 @@ export async function GET(request: Request) {
       hours,
       hourSlot: `${String(hours).padStart(2, "0")}:00`,
     };
+    // 야간(KST 00:00~05:59)에는 DB를 깨우지 않고 바로 끝낸다. (Neon 컴퓨트 시간 절약)
+    if (!force && !test && hours < QUIET_UNTIL_HOUR) {
+      return NextResponse.json({
+        message: `야간 휴식 시간입니다(KST ${String(QUIET_UNTIL_HOUR).padStart(2, "0")}:00까지). 현재 KST: ${timeStr}`,
+        kstTime: timeStr,
+        quiet: true,
+      });
+    }
+
     const slots = force || test ? [currentSlot] : slotsForScheduledPush(new Date());
     const hourSlot = currentSlot.hourSlot;
     const shouldSendScheduled =

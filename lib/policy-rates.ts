@@ -30,7 +30,7 @@ function normalizeStoredRates(stored: PolicyRate[]) {
   });
 }
 
-export async function getPolicyRates() {
+async function loadStoredRates() {
   const stored = await readAppJson<PolicyRate[]>(
     STORAGE_KEY,
     FILE_NAME,
@@ -41,12 +41,23 @@ export async function getPolicyRates() {
   return normalizeStoredRates(Array.isArray(stored) ? stored : []);
 }
 
+/** 저장소 장애 때도 시장 화면이 죽지 않도록 기본값으로 대체한다. */
+export async function getPolicyRates() {
+  try {
+    return await loadStoredRates();
+  } catch (error) {
+    console.error("정책금리 조회 실패, 기본값 사용:", error);
+    return normalizeStoredRates([]);
+  }
+}
+
 export async function updatePolicyRate(
   id: PolicyRateId,
   value: string,
   reason: string,
 ) {
-  const next = applyPolicyRateUpdate(await getPolicyRates(), id, value, reason);
+  // 저장소 오류 시 기본값으로 덮어쓰지 않도록 실패를 그대로 던지는 조회를 쓴다.
+  const next = applyPolicyRateUpdate(await loadStoredRates(), id, value, reason);
   await writeAppJson(STORAGE_KEY, FILE_NAME, BLOB_PATH, next);
   return next;
 }
