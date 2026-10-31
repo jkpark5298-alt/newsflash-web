@@ -611,18 +611,20 @@ export function matchesKeyword(text: string, keyword: string): boolean {
 }
 
 export function isCronAuthorized(request: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
+  // 복사·붙여넣기로 생기는 앞뒤 공백/줄바꿈은 무시한다.
+  const cronSecret = process.env.CRON_SECRET?.trim();
 
   // Fail closed in deployed/production environments.
   if (!cronSecret) {
     return !isProductionRuntime();
   }
 
-  const authHeader = request.headers.get("authorization");
-  if (authHeader === `Bearer ${cronSecret}`) return true;
+  const authHeader = request.headers.get("authorization")?.trim() ?? "";
+  const bearer = authHeader.replace(/^Bearer\s+/i, "");
+  if (authHeader && safeEqual(bearer, cronSecret)) return true;
 
-  const cronHeader = request.headers.get("x-cron-secret");
-  if (cronHeader === cronSecret) return true;
+  const cronHeader = request.headers.get("x-cron-secret")?.trim() ?? "";
+  if (cronHeader && safeEqual(cronHeader, cronSecret)) return true;
 
   // Query-string secrets leak via logs/Referer — reject them.
   return false;
