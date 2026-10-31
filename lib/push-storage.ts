@@ -626,13 +626,6 @@ export function isCronAuthorized(request: Request): boolean {
   const cronHeader = request.headers.get("x-cron-secret")?.trim() ?? "";
   if (cronHeader && safeEqual(cronHeader, cronSecret)) return true;
 
-  // 진단용: 비밀키 내용은 남기지 않고 길이와 형태만 기록한다.
-  console.warn(
-    `크론 인증 실패: authorization=${authHeader ? `있음(Bearer 형식=${/^Bearer\s/i.test(authHeader)}, 키 길이=${bearer.length})` : "없음"}, ` +
-      `x-cron-secret=${cronHeader ? `있음(길이=${cronHeader.length})` : "없음"}, ` +
-      `서버 CRON_SECRET 길이=${cronSecret.length}`,
-  );
-
   // Query-string secrets leak via logs/Referer — reject them.
   return false;
 }
