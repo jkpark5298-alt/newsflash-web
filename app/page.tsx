@@ -533,6 +533,19 @@ export default function Home() {
       let subscription = await registration.pushManager.getSubscription();
 
       if (forceResubscribe && subscription) {
+        // 옛 구독을 서버에서 먼저 지운다. (안 지우면 서버에 쓰지 않는 구독이 계속 남는다)
+        try {
+          await fetch("/api/push-subscriptions", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              endpoint: subscription.endpoint,
+              keys: serializePushSubscription(subscription).keys,
+            }),
+          });
+        } catch (error) {
+          console.warn("옛 구독 서버 삭제 실패(무시하고 계속):", error);
+        }
         await subscription.unsubscribe();
         subscription = null;
       }
