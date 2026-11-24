@@ -29,7 +29,12 @@ function openReceivedAlertsDb() {
   });
 }
 
-function rememberPushAlert(data) {
+function isExternalUrl(value) {
+  return typeof value === "string" && /^https?:\/\//i.test(value);
+}
+
+/** 받은 알림 기록 1건을 만든다. (id는 알림을 눌렀을 때 앱 안에서 이 카드를 찾는 데 쓴다) */
+function buildReceivedAlert(data) {
   const receivedAt = new Date().toISOString();
   const title = data.title || "알림";
   const kind =
@@ -47,7 +52,8 @@ function rememberPushAlert(data) {
     kind,
     title,
     body: data.body || "",
-    url: data.url,
+    // 카드의 "기사 보기" 링크. 예전 서버는 기사 주소를 url에 담아 보냈다.
+    url: data.link || (isExternalUrl(data.url) ? data.url : undefined),
     source: data.source || undefined,
     receivedAt,
     articles: Array.isArray(data.articles)
@@ -58,7 +64,27 @@ function rememberPushAlert(data) {
         }))
       : undefined,
   };
+  return alert;
+}
 
+/**
+ * 알림을 누르면 열 주소.
+ * - 키워드 속보: 언론사 기사 원문으로 바로 간다.
+ * - 정기 뉴스·증시 등: 앱 알림 안내판의 그 알림 카드로 간다.
+ */
+function notificationTargetUrl(alert) {
+  if (alert.kind === "keyword" && isExternalUrl(alert.url)) return alert.url;
+  return alertBoardUrl(alert);
+}
+
+function alertBoardUrl(alert) {
+  const params = new URLSearchParams({ view: "alerts" });
+  if (alert.kind === "news" || alert.kind === "stock") params.set("focus", alert.kind);
+  params.set("alert", alert.id);
+  return `/?${params.toString()}#received-alerts`;
+}
+
+function rememberPushAlert(alert) {
   return openReceivedAlertsDb().then(
     (db) =>
       new Promise((resolve, reject) => {
@@ -108,16 +134,11 @@ self.addEventListener("push", (event) => {
     }
   }
 
-  const targetUrl =
-    data.url ||
-    (data.focus === "stock"
-      ? "/?view=alerts&focus=stock#recent-scheduled-alerts"
-      : data.focus === "news"
-        ? "/?view=alerts&focus=news#recent-scheduled-alerts"
-        : "/?view=alerts#recent-scheduled-alerts");
+  const alert = buildReceivedAlert(data);
+  const targetUrl = notificationTargetUrl(alert);
 
   event.waitUntil(
-    rememberPushAlert(data)
+    rememberPushAlert(alert)
       .catch((error) => {
         console.error("받은 알림 저장 실패:", error);
       })
@@ -135,8 +156,9 @@ self.addEventListener("push", (event) => {
           badge: "/icons/icon-192.png",
           data: {
             url: targetUrl,
+            alertId: alert.id,
             view: data.view || "alerts",
-            focus: data.focus,
+            focus: alert.kind,
             title: data.title,
             body: data.body,
             articles: data.articles,
@@ -151,12 +173,14 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
   const payload = event.notification.data || {};
-  const relativeUrl =
-    payload.url || "/?view=alerts#recent-scheduled-alerts";
+  const relativeUrl = payload.url || "/?view=alerts#received-alerts";
   const targetUrl = new URL(relativeUrl, self.location.origin).href;
+  // 키워드 속보는 언론사 기사로 바로 가므로, 앱에 알림 안내판을 열라고 보내지 않는다.
+  const opensArticle = isExternalUrl(payload.url);
 
   const message = {
     type: "OPEN_ALERT_BOARD",
+    alertId: payload.alertId,
     focus: payload.focus || "news",
     title: payload.title || event.notification.title,
     body: payload.body || event.notification.body,
@@ -176,14 +200,14 @@ self.addEventListener("notificationclick", (event) => {
             } catch (error) {
               // navigate may fail on some iOS PWA builds; postMessage still opens the board
             }
-            client.postMessage(message);
+            if (!opensArticle) client.postMessage(message);
             return client.focus();
           }
         }
 
         if (self.clients.openWindow) {
           const opened = await self.clients.openWindow(targetUrl);
-          if (opened) {
+          if (opened && !opensArticle) {
             // Give the new page a moment, then ask it to open the alert board.
             setTimeout(() => {
               opened.postMessage(message);

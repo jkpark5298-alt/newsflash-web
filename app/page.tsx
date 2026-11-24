@@ -223,6 +223,8 @@ export default function Home() {
     } catch (e) { return []; }
   });
   const [receivedAlerts, setReceivedAlerts] = useState<ReceivedAlert[]>([]);
+  /** 푸시 알림을 눌러 들어왔을 때 강조할 받은 알림 카드 */
+  const [highlightedAlertId, setHighlightedAlertId] = useState<string | null>(null);
 
   const persistReceivedAlert = (alert: ReceivedAlert) => {
     saveReceivedAlert(alert)
@@ -257,6 +259,7 @@ export default function Home() {
   };
 
   const openAlertBoard = (options?: {
+    alertId?: string | null;
     focus?: string | null;
     title?: string;
     body?: string;
@@ -294,6 +297,33 @@ export default function Home() {
         options.title || "📊 [증시 알림]",
         options.body,
       );
+    }
+
+    const alertId = options?.alertId;
+    if (alertId) {
+      // 누른 알림 카드로 바로 간다. 서비스 워커가 방금 저장했으므로 목록을 다시 읽고,
+      // 카드가 화면에 그려질 때까지 잠깐 기다렸다가 스크롤한다.
+      setHighlightedAlertId(alertId);
+      loadReceivedAlerts().then(setReceivedAlerts).catch(console.error);
+      let tries = 0;
+      const scrollToCard = () => {
+        const card = document.getElementById(`received-alert-${alertId}`);
+        if (card) {
+          card.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+        tries += 1;
+        if (tries < 20) {
+          window.setTimeout(scrollToCard, 150);
+        } else {
+          document
+            .getElementById("received-alerts")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      };
+      window.setTimeout(scrollToCard, 120);
+      window.setTimeout(() => setHighlightedAlertId(null), 8000);
+      return;
     }
 
     window.setTimeout(() => {
@@ -878,7 +908,10 @@ export default function Home() {
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("view") === "alerts") {
-      openAlertBoard({ focus: params.get("focus") || "news" });
+      openAlertBoard({
+        alertId: params.get("alert"),
+        focus: params.get("focus") || "news",
+      });
     }
   }, [loading]);
 
@@ -898,6 +931,7 @@ export default function Home() {
 
       if (!data || data.type !== "OPEN_ALERT_BOARD") return;
       openAlertBoard({
+        alertId: typeof data.alertId === "string" ? data.alertId : null,
         focus: data.focus || "news",
         title: data.title,
         body: data.body,
@@ -3370,7 +3404,15 @@ export default function Home() {
                               </h4>
                               <div className="space-y-3">
                                 {group.items.map((alert) => (
-                                  <div key={alert.id} className="rounded-2xl border border-gray-200 bg-white p-4">
+                                  <div
+                                    key={alert.id}
+                                    id={`received-alert-${alert.id}`}
+                                    className={`rounded-2xl border bg-white p-4 scroll-mt-32 transition-shadow ${
+                                      highlightedAlertId === alert.id
+                                        ? "border-rose-400 ring-4 ring-rose-200"
+                                        : "border-gray-200"
+                                    }`}
+                                  >
                                     <div className="flex items-start justify-between gap-3">
                                       <div className="min-w-0">
                                         <span className="block text-[11px] text-gray-400 mb-1">
@@ -3409,9 +3451,9 @@ export default function Home() {
                                             href={alert.url}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="mt-2 inline-block text-xs font-semibold text-blue-600 hover:underline"
+                                            className="mt-3 inline-block rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700"
                                           >
-                                            기사 보기
+                                            기사 원문 보기
                                           </a>
                                         ) : null}
                                       </div>
