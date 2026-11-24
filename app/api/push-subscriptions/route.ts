@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  countSubscriptions,
   findOwnedSubscription,
   getCronCheckedAt,
   getPushStorageInfo,
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const subscriptions = await upsertSubscription({
+    await upsertSubscription({
       endpoint: subscription.endpoint,
       keys: subscription.keys,
       userAgent: userAgent || "",
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      count: subscriptions.length,
+      count: await countSubscriptions(),
       storage: getPushStorageInfo(),
     });
   } catch (error: unknown) {
@@ -155,9 +156,9 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const subscriptions = await removeSubscription(endpoint);
+    await removeSubscription(endpoint);
 
-    return NextResponse.json({ success: true, count: subscriptions.length });
+    return NextResponse.json({ success: true, count: await countSubscriptions() });
   } catch (error: unknown) {
     console.error("구독 삭제 API 에러:", error);
     return NextResponse.json(

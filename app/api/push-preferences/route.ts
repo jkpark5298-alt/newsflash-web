@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   findOwnedSubscription,
-  getSubscriptions,
-  saveSubscriptions,
-  type PushSubscriptionRecord,
+  updateSubscriptionSettings,
 } from "@/lib/push-storage";
 import { normalizeScheduledNewsHours } from "@/lib/alert-schedule";
 
@@ -47,10 +45,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const subscriptions = await getSubscriptions();
-    const index = subscriptions.findIndex((sub) => sub.endpoint === endpoint);
+    // 이 기기의 칸만 바꾼다. (다른 기기·크론 기록은 건드리지 않음)
+    const updated = await updateSubscriptionSettings(endpoint, {
+      alertEnabled: typeof alertEnabled === "boolean" ? alertEnabled : undefined,
+      scheduledAlertEnabled:
+        typeof scheduledAlertEnabled === "boolean" ? scheduledAlertEnabled : undefined,
+      scheduledNewsHours: Array.isArray(scheduledNewsHours)
+        ? normalizeScheduledNewsHours(scheduledNewsHours)
+        : undefined,
+      alertKeywords: Array.isArray(alertKeywords) ? alertKeywords : undefined,
+    });
 
-    if (index === -1) {
+    if (!updated) {
       return NextResponse.json(
         {
           error:
@@ -59,28 +65,6 @@ export async function POST(request: Request) {
         { status: 404 },
       );
     }
-
-    const updated: PushSubscriptionRecord = {
-      ...subscriptions[index],
-      alertEnabled:
-        typeof alertEnabled === "boolean"
-          ? alertEnabled
-          : subscriptions[index].alertEnabled,
-      scheduledAlertEnabled:
-        typeof scheduledAlertEnabled === "boolean"
-          ? scheduledAlertEnabled
-          : subscriptions[index].scheduledAlertEnabled,
-      scheduledNewsHours: Array.isArray(scheduledNewsHours)
-        ? normalizeScheduledNewsHours(scheduledNewsHours)
-        : subscriptions[index].scheduledNewsHours,
-      alertKeywords: Array.isArray(alertKeywords)
-        ? alertKeywords
-        : subscriptions[index].alertKeywords,
-      updatedAt: new Date().toISOString(),
-    };
-
-    subscriptions[index] = updated;
-    await saveSubscriptions(subscriptions);
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

@@ -15,7 +15,9 @@ import {
   markCronChecked,
   markSentSlot,
   matchesKeyword,
-  saveSubscriptions,
+  recordDeliveryResult,
+  removeSubscription,
+  setSeenArticleLinks,
   type PushSubscriptionRecord,
 } from "@/lib/push-storage";
 import {
@@ -390,7 +392,6 @@ export async function GET(request: Request) {
       statusCode?: number;
       message?: string;
     }> = [];
-    const updatedSubscriptions = [...subscriptions];
     const sentSlotKeys = new Set<string>();
 
     const webpush = require("web-push");
@@ -403,6 +404,11 @@ export async function GET(request: Request) {
 
     for (const item of perSubscriptionNotifications) {
       const delivery: DeliveryAlert[] = [];
+      let lastResult:
+        | { ok: true }
+        | { ok: false; statusCode?: number; message?: string }
+        | null = null;
+      let expired = false;
 
       for (const alert of item.notifications) {
         let delivered = false;
@@ -425,6 +431,7 @@ export async function GET(request: Request) {
             }),
           );
           delivered = true;
+          lastResult = { ok: true };
           sentCount++;
           if (alert.slotKey) {
             sentSlotKeys.add(alert.slotKey);
@@ -437,8 +444,16 @@ export async function GET(request: Request) {
             statusCode: pushError.statusCode,
             message: pushError.message,
           });
+          lastResult = {
+            ok: false,
+            statusCode: pushError.statusCode,
+            message: pushError.message,
+          };
           if (pushError.statusCode === 410 || pushError.statusCode === 404) {
+            // Apple/Google이 "이 구독은 없어졌다"고 답한 경우. 더 보내도 소용없다.
             failedEndpoints.push(item.sub.endpoint);
+            expired = true;
+            break;
           }
         }
 
@@ -450,32 +465,24 @@ export async function GET(request: Request) {
         });
       }
 
-      const index = updatedSubscriptions.findIndex(
-        (sub) => sub.endpoint === item.sub.endpoint,
-      );
-      if (index > -1) {
-        updatedSubscriptions[index] = {
-          ...updatedSubscriptions[index],
-          seenArticleLinks: seenLinksAfterDelivery(
-            updatedSubscriptions[index].seenArticleLinks || [],
-            delivery,
-          ),
-        };
+      // 이 기기의 칸만 갱신한다. (다른 기기·설정은 건드리지 않음)
+      try {
+        if (expired) {
+          await removeSubscription(item.sub.endpoint);
+        } else {
+          await setSeenArticleLinks(
+            item.sub.endpoint,
+            seenLinksAfterDelivery(item.sub.seenArticleLinks || [], delivery),
+          );
+          if (lastResult) await recordDeliveryResult(item.sub.endpoint, lastResult);
+        }
+      } catch (error) {
+        console.error(`구독 상태 저장 실패 (${item.sub.endpoint.substring(0, 40)}...):`, error);
       }
     }
 
     for (const slotKey of sentSlotKeys) {
       await markSentSlot(slotKey);
-    }
-
-    if (failedEndpoints.length > 0) {
-      await saveSubscriptions(
-        updatedSubscriptions.filter(
-          (sub) => !failedEndpoints.includes(sub.endpoint),
-        ),
-      );
-    } else {
-      await saveSubscriptions(updatedSubscriptions);
     }
 
     const cronCheckedAt = await recordCronCheck();

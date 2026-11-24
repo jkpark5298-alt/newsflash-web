@@ -8,6 +8,14 @@ import { isKeywordMatch } from "@/lib/breaking-select";
 import {
   isRedisConfigured,
   readRedisJson,
+  redisGetString,
+  redisHashDelete,
+  redisHashGet,
+  redisHashGetAll,
+  redisHashLength,
+  redisHashSet,
+  redisHashSetIfMissing,
+  redisSetString,
   writeRedisJson,
 } from "@/lib/redis-rest";
 
@@ -343,26 +351,6 @@ export function getVapidPublicKey(): string {
   return getVapidKeys().publicKey;
 }
 
-export async function findOwnedSubscription(
-  endpoint: string,
-  keys: { p256dh: string; auth: string },
-): Promise<PushSubscriptionRecord | null> {
-  if (!endpoint || !keys?.p256dh || !keys?.auth) return null;
-
-  const subscriptions = await getSubscriptions();
-  const match = subscriptions.find((sub) => sub.endpoint === endpoint);
-  if (!match?.keys?.p256dh || !match?.keys?.auth) return null;
-
-  if (
-    !safeEqual(match.keys.p256dh, keys.p256dh) ||
-    !safeEqual(match.keys.auth, keys.auth)
-  ) {
-    return null;
-  }
-
-  return match;
-}
-
 export async function readAppJson<T>(
   key: string,
   fileName: string,
@@ -410,7 +398,48 @@ export async function writeAppJson(
   writeFileJson(path.join(paths.dir, fileName), data);
 }
 
-export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
+/* ───────────────────────── 푸시 구독 저장 ─────────────────────────
+ * 구독은 기기(endpoint)마다 따로 저장한다. (Redis 해시 3개)
+ *   push:subs   endpoint → 기기 설정 (키, 알림 ON/OFF, 시간, 키워드)
+ *   push:seen   endpoint → 이미 보낸 기사 목록 (크론만 쓴다)
+ *   push:status endpoint → 마지막 발송 성공/실패 (크론만 쓴다)
+ * 예전처럼 "전체 목록을 읽고 → 고치고 → 통째로 다시 쓰는" 일이 없으므로,
+ * 크론·설정 저장·새 구독이 동시에 일어나도 서로의 변경을 지우지 않는다.
+ * (Redis가 없는 로컬 개발 환경에서만 옛 배열 방식을 쓴다.)
+ */
+
+const SUBS_HASH = "push:subs";
+const SEEN_HASH = "push:seen";
+const STATUS_HASH = "push:status";
+const SUBS_MIGRATED_FLAG = "migrated:push:subs";
+
+export type PushDeliveryStatus = {
+  lastSuccessAt?: string;
+  lastErrorAt?: string;
+  lastStatusCode?: number;
+  lastError?: string;
+};
+
+type StoredSettings = Omit<PushSubscriptionRecord, "seenArticleLinks">;
+
+function parseRecord<T>(raw: string | null | undefined): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function toStoredSettings(record: PushSubscriptionRecord): StoredSettings {
+  // seenArticleLinks는 별도 칸에 저장한다.
+  const { seenArticleLinks: _seen, ...settings } = record;
+  void _seen;
+  return settings;
+}
+
+/** 옛 배열 저장소(Redis 단일 키 / Neon / Blob / 로컬 파일)를 읽는다. */
+async function readLegacySubscriptionArray(): Promise<PushSubscriptionRecord[]> {
   if (isRedisConfigured()) {
     return readRedisJson<PushSubscriptionRecord[]>(
       PG_SUBSCRIPTIONS_KEY,
@@ -425,55 +454,128 @@ export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
     return readBlobJson<PushSubscriptionRecord[]>(SUBSCRIPTIONS_BLOB_PATH, []);
   }
   if (isVercelRuntime()) {
-    console.warn(
-      "Vercel에서 구독 저장소가 없습니다. Neon(DATABASE_URL)을 연결하세요.",
-    );
+    console.warn("Vercel에서 구독 저장소가 없습니다. Upstash Redis를 연결하세요.");
     return [];
   }
   return readFileJson<PushSubscriptionRecord[]>(paths.subscriptions, []);
 }
 
-export async function saveSubscriptions(
-  subscriptions: PushSubscriptionRecord[],
-) {
-  if (isRedisConfigured()) {
-    await writeRedisJson(PG_SUBSCRIPTIONS_KEY, subscriptions);
-    return;
-  }
+async function writeLegacySubscriptionArray(subscriptions: PushSubscriptionRecord[]) {
   if (usePostgresStorage()) {
     await writePostgresJson(PG_SUBSCRIPTIONS_KEY, subscriptions);
     return;
   }
-
   if (useBlobStorage()) {
     await writeBlobJson(SUBSCRIPTIONS_BLOB_PATH, subscriptions);
     return;
   }
-
   if (isVercelRuntime()) {
-    throw new Error(
-      "구독 저장소가 없습니다. Neon(DATABASE_URL) 또는 Blob을 연결한 뒤 Redeploy하세요.",
-    );
+    throw new Error("구독 저장소가 없습니다. Upstash Redis를 연결한 뒤 Redeploy하세요.");
   }
-
-  try {
-    writeFileJson(paths.subscriptions, subscriptions);
-  } catch (error) {
-    console.error("구독 파일 갱신 에러:", error);
-    throw error;
-  }
+  writeFileJson(paths.subscriptions, subscriptions);
 }
 
+/** 옛 배열 키에 있던 구독을 기기별 해시로 한 번만 옮긴다. */
+let migrationPromise: Promise<void> | null = null;
+async function ensureSubscriptionsMigrated() {
+  if (!isRedisConfigured()) return;
+  if (!migrationPromise) {
+    migrationPromise = (async () => {
+      if ((await redisGetString(SUBS_MIGRATED_FLAG)) !== null) return;
+      const legacy = await readLegacySubscriptionArray();
+      for (const record of legacy) {
+        if (!record?.endpoint) continue;
+        // 이미 새 방식으로 저장된 기기는 덮어쓰지 않는다.
+        await redisHashSetIfMissing(
+          SUBS_HASH,
+          record.endpoint,
+          JSON.stringify(toStoredSettings(record)),
+        );
+        if (record.seenArticleLinks?.length) {
+          await redisHashSetIfMissing(
+            SEEN_HASH,
+            record.endpoint,
+            JSON.stringify(record.seenArticleLinks),
+          );
+        }
+      }
+      await redisSetString(SUBS_MIGRATED_FLAG, new Date().toISOString());
+      console.log(`푸시 구독 ${legacy.length}건을 기기별 저장으로 옮겼습니다.`);
+    })().catch((error) => {
+      migrationPromise = null;
+      throw error;
+    });
+  }
+  await migrationPromise;
+}
+
+export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
+  if (!isRedisConfigured()) return readLegacySubscriptionArray();
+
+  await ensureSubscriptionsMigrated();
+  const [subs, seen] = await Promise.all([
+    redisHashGetAll(SUBS_HASH),
+    redisHashGetAll(SEEN_HASH),
+  ]);
+
+  const records: PushSubscriptionRecord[] = [];
+  for (const [endpoint, raw] of Object.entries(subs)) {
+    const settings = parseRecord<StoredSettings>(raw);
+    if (!settings?.keys) continue;
+    records.push({
+      ...settings,
+      endpoint,
+      seenArticleLinks: parseRecord<string[]>(seen[endpoint]) ?? [],
+    });
+  }
+  return records;
+}
+
+export async function getSubscription(
+  endpoint: string,
+): Promise<PushSubscriptionRecord | null> {
+  if (!endpoint) return null;
+  if (!isRedisConfigured()) {
+    return (await readLegacySubscriptionArray()).find((sub) => sub.endpoint === endpoint) ?? null;
+  }
+
+  await ensureSubscriptionsMigrated();
+  const settings = parseRecord<StoredSettings>(await redisHashGet(SUBS_HASH, endpoint));
+  if (!settings?.keys) return null;
+  const seen = parseRecord<string[]>(await redisHashGet(SEEN_HASH, endpoint)) ?? [];
+  return { ...settings, endpoint, seenArticleLinks: seen };
+}
+
+export async function countSubscriptions(): Promise<number> {
+  if (!isRedisConfigured()) return (await readLegacySubscriptionArray()).length;
+  await ensureSubscriptionsMigrated();
+  return redisHashLength(SUBS_HASH);
+}
+
+export async function findOwnedSubscription(
+  endpoint: string,
+  keys: { p256dh: string; auth: string },
+): Promise<PushSubscriptionRecord | null> {
+  if (!endpoint || !keys?.p256dh || !keys?.auth) return null;
+
+  const match = await getSubscription(endpoint);
+  if (!match?.keys?.p256dh || !match?.keys?.auth) return null;
+
+  if (
+    !safeEqual(match.keys.p256dh, keys.p256dh) ||
+    !safeEqual(match.keys.auth, keys.auth)
+  ) {
+    return null;
+  }
+
+  return match;
+}
+
+/** 이 기기의 구독을 등록하거나, 이미 있으면 넘어온 값만 갱신한다. 다른 기기는 건드리지 않는다. */
 export async function upsertSubscription(
   record: PushSubscriptionRecord,
-): Promise<PushSubscriptionRecord[]> {
-  const subscriptions = await getSubscriptions();
-  const existingIndex = subscriptions.findIndex(
-    (sub) => sub.endpoint === record.endpoint,
-  );
-
-  const existing =
-    existingIndex > -1 ? subscriptions[existingIndex] : undefined;
+): Promise<PushSubscriptionRecord> {
+  const existing = await getSubscription(record.endpoint);
 
   const merged: PushSubscriptionRecord = {
     ...(existing || {}),
@@ -484,40 +586,112 @@ export async function upsertSubscription(
     scheduledNewsHours:
       record.scheduledNewsHours ?? existing?.scheduledNewsHours,
     alertKeywords: record.alertKeywords ?? existing?.alertKeywords,
-    seenArticleLinks:
-      record.seenArticleLinks ?? existing?.seenArticleLinks ?? [],
+    seenArticleLinks: existing?.seenArticleLinks ?? [],
   };
 
-  if (existingIndex > -1) {
-    subscriptions[existingIndex] = merged;
-  } else {
-    subscriptions.push(merged);
+  if (isRedisConfigured()) {
+    await redisHashSet(SUBS_HASH, merged.endpoint, JSON.stringify(toStoredSettings(merged)));
+    // 새로 연결했으면 이전 실패 기록은 지운다.
+    await redisHashDelete(STATUS_HASH, merged.endpoint);
+    return merged;
   }
 
-  await saveSubscriptions(subscriptions);
-
-  try {
-    const verified = await getSubscriptions();
-    if (!verified.some((sub) => sub.endpoint === record.endpoint)) {
-      console.warn(
-        `구독 저장 직후 조회에 아직 반영되지 않음. 저장=${subscriptions.length}, 조회=${verified.length}`,
-      );
-    }
-  } catch (error) {
-    console.warn("구독 저장 직후 검증 조회 실패(무시):", error);
-  }
-
-  return subscriptions;
+  const subscriptions = await readLegacySubscriptionArray();
+  const index = subscriptions.findIndex((sub) => sub.endpoint === merged.endpoint);
+  if (index > -1) subscriptions[index] = merged;
+  else subscriptions.push(merged);
+  await writeLegacySubscriptionArray(subscriptions);
+  return merged;
 }
 
-export async function removeSubscription(
+/** 이 기기의 설정만 바꾼다. 구독이 없으면 null. */
+export async function updateSubscriptionSettings(
   endpoint: string,
-): Promise<PushSubscriptionRecord[]> {
-  const subscriptions = (await getSubscriptions()).filter(
+  patch: Partial<
+    Pick<
+      PushSubscriptionRecord,
+      "alertEnabled" | "scheduledAlertEnabled" | "scheduledNewsHours" | "alertKeywords"
+    >
+  >,
+): Promise<PushSubscriptionRecord | null> {
+  const existing = await getSubscription(endpoint);
+  if (!existing) return null;
+
+  const updated: PushSubscriptionRecord = {
+    ...existing,
+    ...Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined),
+    ),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (isRedisConfigured()) {
+    await redisHashSet(SUBS_HASH, endpoint, JSON.stringify(toStoredSettings(updated)));
+    return updated;
+  }
+
+  const subscriptions = await readLegacySubscriptionArray();
+  const index = subscriptions.findIndex((sub) => sub.endpoint === endpoint);
+  if (index === -1) return null;
+  subscriptions[index] = updated;
+  await writeLegacySubscriptionArray(subscriptions);
+  return updated;
+}
+
+export async function removeSubscription(endpoint: string): Promise<void> {
+  if (isRedisConfigured()) {
+    await ensureSubscriptionsMigrated();
+    await Promise.all([
+      redisHashDelete(SUBS_HASH, endpoint),
+      redisHashDelete(SEEN_HASH, endpoint),
+      redisHashDelete(STATUS_HASH, endpoint),
+    ]);
+    return;
+  }
+
+  const subscriptions = (await readLegacySubscriptionArray()).filter(
     (sub) => sub.endpoint !== endpoint,
   );
-  await saveSubscriptions(subscriptions);
-  return subscriptions;
+  await writeLegacySubscriptionArray(subscriptions);
+}
+
+/** 크론 전용: 이 기기에 이미 보낸 기사 목록을 저장한다. */
+export async function setSeenArticleLinks(endpoint: string, links: string[]) {
+  if (isRedisConfigured()) {
+    await redisHashSet(SEEN_HASH, endpoint, JSON.stringify(links));
+    return;
+  }
+
+  const subscriptions = await readLegacySubscriptionArray();
+  const index = subscriptions.findIndex((sub) => sub.endpoint === endpoint);
+  if (index === -1) return;
+  subscriptions[index] = { ...subscriptions[index], seenArticleLinks: links };
+  await writeLegacySubscriptionArray(subscriptions);
+}
+
+/** 크론 전용: 이 기기로의 마지막 발송 결과를 남긴다. */
+export async function recordDeliveryResult(
+  endpoint: string,
+  result: { ok: true } | { ok: false; statusCode?: number; message?: string },
+) {
+  if (!isRedisConfigured()) return;
+  const previous =
+    parseRecord<PushDeliveryStatus>(await redisHashGet(STATUS_HASH, endpoint)) ?? {};
+  const now = new Date().toISOString();
+  const next: PushDeliveryStatus = result.ok
+    ? { ...previous, lastSuccessAt: now }
+    : {
+        ...previous,
+        lastErrorAt: now,
+        lastStatusCode: result.statusCode,
+        lastError: result.message?.slice(0, 200),
+      };
+  await redisHashSet(STATUS_HASH, endpoint, JSON.stringify(next));
+}
+
+export async function getDeliveryStatus(endpoint: string): Promise<PushDeliveryStatus | null> {
+  if (!isRedisConfigured()) return null;
+  return parseRecord<PushDeliveryStatus>(await redisHashGet(STATUS_HASH, endpoint));
 }
 
 export async function getSentSlots(): Promise<Record<string, string>> {

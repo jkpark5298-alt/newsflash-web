@@ -179,7 +179,14 @@ export default function Home() {
   const [pushConnectionMessage, setPushConnectionMessage] = useState<string>("");
   const [isConnectingPush, setIsConnectingPush] = useState(false);
   const hasWebPushSubscriptionRef = useRef(false);
-  const skipAlertAutoSyncRef = useRef(true);
+  /** 앱을 연 뒤 이 기기 설정을 (서버 기준으로) 다 불러오기 전에는 서버에 아무것도 쓰지 않는다. */
+  const settingsHydratedRef = useRef(false);
+  const [deviceRegistered, setDeviceRegistered] = useState<boolean | null>(null);
+  const [deviceStatus, setDeviceStatus] = useState<{
+    lastSuccessAt?: string;
+    lastErrorAt?: string;
+    lastStatusCode?: number;
+  } | null>(null);
   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] = useState(false);
   const [showDebugTools, setShowDebugTools] = useState(false);
   const [keywordInput, setKeywordInput] = useState("");
@@ -453,18 +460,24 @@ export default function Home() {
         subscription ?? (await registration.pushManager.getSubscription());
       if (!activeSubscription) return;
 
-      await fetch("/api/push-preferences", {
+      const serialized = serializePushSubscription(activeSubscription);
+      const prefRes = await fetch("/api/push-preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           endpoint: activeSubscription.endpoint,
-          keys: serializePushSubscription(activeSubscription).keys,
+          keys: serialized.keys,
           alertEnabled: effectiveSettings.alertEnabled,
           scheduledAlertEnabled: effectiveSettings.scheduledAlertEnabled,
           scheduledNewsHours: effectiveSettings.scheduledNewsHours,
           alertKeywords: effectiveSettings.alertKeywords,
         }),
       });
+
+      // 서버가 이 기기의 구독을 잃어버렸으면(403/404) 새 구독으로 다시 등록한다.
+      if (prefRes.status === 403 || prefRes.status === 404) {
+        await enablePushNotification(false, true, effectiveSettings, true);
+      }
     } catch (e) {
       console.error("알림 설정 서버 동기화 실패:", e);
     }
@@ -475,8 +488,12 @@ export default function Home() {
     requestPermission = true,
     forceResubscribe = false,
     settingsOverride?: Partial<PushSettings>,
+    silent = false,
   ) => {
     if (typeof window === "undefined") return false;
+    // 앱이 스스로 복구할 때(silent)는 팝업을 띄우지 않는다.
+    const alert = (message: string) =>
+      silent ? console.warn(message) : window.alert(message);
     if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
       console.warn("이 브라우저는 백그라운드 웹 푸시 알림을 지원하지 않습니다.");
       alert("이 브라우저/실행 방식에서는 백그라운드 푸시를 지원하지 않습니다.");
@@ -567,7 +584,8 @@ export default function Home() {
         );
       }
 
-      await syncPushPreferences(subscription, effectiveSettings);
+      setDeviceRegistered(true);
+      setDeviceStatus(null);
       setServerSubscriptionCount(savedCount);
 
       let latestCount = await refreshPushSubscriptionStatus();
@@ -693,10 +711,88 @@ export default function Home() {
 
         // 2. 브라우저 구독 해제
         await subscription.unsubscribe();
+        setDeviceRegistered(false);
+        setDeviceStatus(null);
         console.log("백그라운드 웹 푸시 구독이 해제되었습니다.");
       }
     } catch (e) {
       console.error("백그라운드 웹 푸시 해제 에러:", e);
+    }
+  };
+
+  /**
+   * 이 기기의 서버 구독 상태를 확인하고 맞춘다. (앱을 열 때, 알림 안내판을 열 때)
+   * - 서버에 등록돼 있으면: 서버에 저장된 설정을 화면·기기에 반영한다. (서버가 기준)
+   * - 폰에는 구독이 있는데 서버에 없으면: 팝업 없이 새 구독으로 다시 등록한다.
+   * - 서버가 "키가 안 맞는다(403)"고 기록했으면: 새 구독으로 다시 등록한다.
+   * 끝나면 settingsHydratedRef를 켜서, 그 뒤의 변경만 서버로 보내게 한다.
+   */
+  const reconcileDevicePush = async (localSettings: PushSettings) => {
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        setDeviceRegistered(false);
+        return;
+      }
+
+      await navigator.serviceWorker.register("/sw.js");
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        setDeviceRegistered(false);
+        return;
+      }
+
+      const serialized = serializePushSubscription(subscription);
+      const res = await fetch("/api/push-device", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ endpoint: serialized.endpoint, keys: serialized.keys }),
+      });
+      if (!res.ok) throw new Error(`기기 구독 확인 실패 (${res.status})`);
+      const data = await res.json();
+
+      const keyMismatch = data.registered && data.status?.lastStatusCode === 403;
+
+      if (!data.registered || keyMismatch) {
+        console.warn(
+          keyMismatch
+            ? "서버 키와 맞지 않는 구독입니다. 새로 연결합니다."
+            : "서버에 이 기기 구독이 없습니다. 다시 등록합니다.",
+        );
+        if (Notification.permission === "granted") {
+          const healed = await enablePushNotification(false, true, localSettings, true);
+          setDeviceRegistered(healed);
+        } else {
+          setDeviceRegistered(false);
+        }
+        return;
+      }
+
+      const server = data.settings as PushSettings;
+      setAlertEnabled(server.alertEnabled);
+      setScheduledAlertEnabled(server.scheduledAlertEnabled);
+      setScheduledNewsHours(normalizeScheduledNewsHours(server.scheduledNewsHours));
+      setAlertKeywords(server.alertKeywords);
+      try {
+        window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, JSON.stringify(server.alertEnabled));
+        window.localStorage.setItem(
+          SCHEDULED_ALERT_ENABLED_STORAGE_KEY,
+          JSON.stringify(server.scheduledAlertEnabled),
+        );
+        window.localStorage.setItem(
+          SCHEDULED_NEWS_HOURS_STORAGE_KEY,
+          JSON.stringify(normalizeScheduledNewsHours(server.scheduledNewsHours)),
+        );
+        window.localStorage.setItem(ALERT_KEYWORDS_STORAGE_KEY, JSON.stringify(server.alertKeywords));
+      } catch {}
+      setDeviceRegistered(true);
+      setDeviceStatus(data.status ?? null);
+    } catch (error) {
+      console.warn("기기 푸시 상태 확인 실패:", error);
+    } finally {
+      settingsHydratedRef.current = true;
     }
   };
 
@@ -709,28 +805,39 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      const localSettings: PushSettings = {
+        alertEnabled: false,
+        scheduledAlertEnabled: true,
+        scheduledNewsHours: [...DEFAULT_NEWS_HOURS],
+        alertKeywords: [],
+      };
       try {
         const savedKeywords = window.localStorage.getItem(ALERT_KEYWORDS_STORAGE_KEY);
         if (savedKeywords) {
           const parsed = JSON.parse(savedKeywords);
-          if (Array.isArray(parsed)) setAlertKeywords(parsed);
+          if (Array.isArray(parsed)) {
+            setAlertKeywords(parsed);
+            localSettings.alertKeywords = parsed;
+          }
         }
 
         const savedAlert = window.localStorage.getItem(ALERT_ENABLED_STORAGE_KEY);
         if (savedAlert !== null) {
           setAlertEnabled(JSON.parse(savedAlert));
+          localSettings.alertEnabled = JSON.parse(savedAlert);
         }
 
         const savedScheduled = window.localStorage.getItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY);
         if (savedScheduled !== null) {
           setScheduledAlertEnabled(JSON.parse(savedScheduled));
+          localSettings.scheduledAlertEnabled = JSON.parse(savedScheduled);
         }
 
         const savedHours = window.localStorage.getItem(SCHEDULED_NEWS_HOURS_STORAGE_KEY);
         if (savedHours) {
-          setScheduledNewsHours(
-            normalizeScheduledNewsHours(JSON.parse(savedHours)),
-          );
+          const hours = normalizeScheduledNewsHours(JSON.parse(savedHours));
+          setScheduledNewsHours(hours);
+          localSettings.scheduledNewsHours = hours;
         }
       } catch (e) {
         console.error("알림 설정 복원 에러:", e);
@@ -740,37 +847,17 @@ export default function Home() {
         setNotificationPermission(Notification.permission);
       }
 
-      if ("serviceWorker" in navigator && "PushManager" in window) {
-        navigator.serviceWorker
-          .register("/sw.js")
-          .then(() => navigator.serviceWorker.ready)
-          .then((registration) => registration.pushManager.getSubscription())
-          .then((subscription) => {
-            if (subscription) {
-              setAlertEnabled(true);
-              setScheduledAlertEnabled(true);
-              try {
-                window.localStorage.setItem(ALERT_ENABLED_STORAGE_KEY, "true");
-                window.localStorage.setItem(SCHEDULED_ALERT_ENABLED_STORAGE_KEY, "true");
-              } catch (e) {}
-            }
-          })
-          .catch((err) => {
-            console.warn("서비스 워커 상태 복원 에러:", err);
-          });
-      }
+      // 폰의 구독을 서버와 맞춘다. (서버 설정이 기준, 빠졌으면 자동 재등록)
+      reconcileDevicePush(localSettings).catch(console.error);
     }
   }, []);
 
   useEffect(() => {
     if (selectedDetailView !== "알림 안내판") return;
     refreshPushSubscriptionStatus().catch(console.error);
-    syncPushPreferences(undefined, {
-      alertEnabled,
-      scheduledAlertEnabled,
-      scheduledNewsHours,
-      alertKeywords,
-    }).catch(console.error);
+    if (settingsHydratedRef.current) {
+      reconcileDevicePush(getCurrentPushSettings()).catch(console.error);
+    }
   }, [selectedDetailView]);
 
   useEffect(() => {
@@ -821,7 +908,7 @@ export default function Home() {
     }
 
     if (nextState) {
-      enablePushNotification(true, true, {
+      enablePushNotification(true, false, {
         alertEnabled,
         scheduledAlertEnabled: nextState,
         scheduledNewsHours,
@@ -1000,7 +1087,7 @@ export default function Home() {
       );
 
       if (alertEnabled || scheduledAlertEnabled) {
-        const registered = await enablePushNotification(true, true, {
+        const registered = await enablePushNotification(true, false, {
           alertEnabled,
           scheduledAlertEnabled,
           scheduledNewsHours,
@@ -1030,7 +1117,7 @@ export default function Home() {
     setAlertEnabled(nextState);
 
     if (nextState) {
-      enablePushNotification(true, true, {
+      enablePushNotification(true, false, {
         alertEnabled: nextState,
         scheduledAlertEnabled,
         scheduledNewsHours,
@@ -1425,10 +1512,8 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (skipAlertAutoSyncRef.current) {
-      skipAlertAutoSyncRef.current = false;
-      return;
-    }
+    // 기기 설정을 다 불러오기 전(기본값 상태)에는 서버에 쓰지 않는다.
+    if (!settingsHydratedRef.current) return;
 
     const timer = window.setTimeout(() => {
       try {
@@ -2960,9 +3045,24 @@ export default function Home() {
                     홈 화면에 추가한 NewsFlash 앱에서 연결하면, 앱을 닫아도 알림을 받을 수 있습니다.
                   </p>
                   <div className="mb-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                    {(serverSubscriptionCount ?? 0) >= 1
-                      ? "알림 연결됨 — 테스트 알림이 이 기기로만 발송됩니다."
-                      : "아직 연결되지 않았습니다. 아래 버튼으로 연결해 주세요."}
+                    {deviceRegistered === null
+                      ? "이 기기 연결 상태 확인 중..."
+                      : deviceRegistered
+                        ? `이 기기 알림 연결됨${
+                            deviceStatus?.lastSuccessAt
+                              ? ` · 마지막 수신 ${new Date(deviceStatus.lastSuccessAt).toLocaleString("ko-KR")}`
+                              : ""
+                          }`
+                        : "이 기기는 서버에 연결되어 있지 않습니다. 아래 버튼으로 연결해 주세요."}
+                    {deviceRegistered &&
+                    deviceStatus?.lastErrorAt &&
+                    (!deviceStatus.lastSuccessAt ||
+                      deviceStatus.lastErrorAt > deviceStatus.lastSuccessAt) ? (
+                      <span className="mt-1 block text-xs text-rose-700">
+                        최근 발송 실패 ({new Date(deviceStatus.lastErrorAt).toLocaleString("ko-KR")}
+                        {deviceStatus.lastStatusCode ? `, 코드 ${deviceStatus.lastStatusCode}` : ""}) — &apos;푸시 연결하기&apos;를 다시 눌러 주세요.
+                      </span>
+                    ) : null}
                     {pushConnectionMessage ? (
                       <span className="mt-1 block text-xs text-amber-800">
                         {pushConnectionMessage}
@@ -2988,7 +3088,15 @@ export default function Home() {
                     <div className="mt-3 space-y-1 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-600">
                       <p>· 실행 환경: {typeof window !== "undefined" ? getPushEnvironmentLabel() : "확인 중"}</p>
                       <p>· 알림 권한: {notificationPermission}</p>
-                      <p>· 서버 구독: {serverSubscriptionCount ?? "확인 중"}</p>
+                      <p>
+                        · 이 기기:{" "}
+                        {deviceRegistered === null
+                          ? "확인 중"
+                          : deviceRegistered
+                            ? "서버 등록됨"
+                            : "서버 미등록"}
+                      </p>
+                      <p>· 서버 구독(전체 기기): {serverSubscriptionCount ?? "확인 중"}</p>
                       <p>
                         · 서버 뉴스 시간:{" "}
                         {serverNewsHours

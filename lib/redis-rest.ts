@@ -115,3 +115,49 @@ export async function readRedisJson<T>(
 export async function writeRedisJson(key: string, data: unknown) {
   await setRaw(key, JSON.stringify(data));
 }
+
+/* ── 해시(HASH): 기기(endpoint)마다 칸을 따로 두고 한 칸씩 읽고 쓴다. ── */
+
+export async function redisHashGetAll(key: string): Promise<Record<string, string>> {
+  const result = await redisCommand(["HGETALL", KEY_PREFIX + key]);
+  const out: Record<string, string> = {};
+  if (Array.isArray(result)) {
+    for (let i = 0; i + 1 < result.length; i += 2) {
+      out[String(result[i])] = String(result[i + 1]);
+    }
+  } else if (result && typeof result === "object") {
+    for (const [field, value] of Object.entries(result)) out[field] = String(value);
+  }
+  return out;
+}
+
+export async function redisHashGet(key: string, field: string): Promise<string | null> {
+  const result = await redisCommand(["HGET", KEY_PREFIX + key, field]);
+  return typeof result === "string" ? result : null;
+}
+
+export async function redisHashSet(key: string, field: string, value: string) {
+  await redisCommand(["HSET", KEY_PREFIX + key, field, value]);
+}
+
+/** 칸이 비어 있을 때만 쓴다. 썼으면 true. */
+export async function redisHashSetIfMissing(key: string, field: string, value: string) {
+  const result = await redisCommand(["HSETNX", KEY_PREFIX + key, field, value]);
+  return Number(result) === 1;
+}
+
+export async function redisHashDelete(key: string, field: string) {
+  await redisCommand(["HDEL", KEY_PREFIX + key, field]);
+}
+
+export async function redisHashLength(key: string): Promise<number> {
+  return Number(await redisCommand(["HLEN", KEY_PREFIX + key])) || 0;
+}
+
+export async function redisGetString(key: string): Promise<string | null> {
+  return getRaw(key);
+}
+
+export async function redisSetString(key: string, value: string) {
+  await setRaw(key, value);
+}
